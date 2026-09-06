@@ -306,6 +306,9 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
             const w = canvas.width;
             const h = canvas.height;
 
+            // Global pulse for subtle high-confidence recognition glowing animation
+            const pulse = (Math.sin(now * 0.0045) + 1) / 2; // Smooth sine wave 0.0 to 1.0 (~1.4s period)
+
             detectedFaces.forEach((face, idx) => {
               const bx = face.box.x * w;
               const by = face.box.y * h;
@@ -313,18 +316,66 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
               const bh = face.box.height * h;
 
               const isRecognized = !!face.recognizedPerson;
+              const isHighConfidence = isRecognized && face.confidence >= 80;
               const isSelected = activeFaceIndex === idx;
 
-              // Bounding Box background tint
-              ctx.fillStyle = isRecognized ? 'rgba(16, 185, 129, 0.08)' : 'rgba(34, 211, 238, 0.08)';
-              ctx.fillRect(bx, by, bw, bh);
+              // 1. Subtle expanding biometric lock-on ripple ring for high-confidence recognition
+              if (isHighConfidence) {
+                const wavePeriod = 2200; // 2.2s cycle
+                const waveProgress = ((now + idx * 500) % wavePeriod) / wavePeriod;
+                const waveOffset = 3 + waveProgress * 10;
+                const waveAlpha = (1 - waveProgress) * 0.4;
 
-              // Tactical glowing corner brackets
+                ctx.save();
+                ctx.strokeStyle = `rgba(52, 211, 153, ${waveAlpha})`;
+                ctx.lineWidth = 1;
+                ctx.shadowColor = 'rgba(16, 185, 129, 0.6)';
+                ctx.shadowBlur = 6;
+                ctx.strokeRect(
+                  bx - waveOffset,
+                  by - waveOffset,
+                  bw + waveOffset * 2,
+                  bh + waveOffset * 2
+                );
+                ctx.restore();
+              }
+
+              // 2. Bounding Box background tint & ambient perimeter aura
+              if (isHighConfidence) {
+                // Subtle glowing background tint
+                const bgAlpha = 0.07 + pulse * 0.06;
+                ctx.fillStyle = `rgba(16, 185, 129, ${bgAlpha})`;
+                ctx.fillRect(bx, by, bw, bh);
+
+                // Soft outer glowing perimeter boundary
+                ctx.save();
+                const auraAlpha = 0.25 + pulse * 0.35;
+                ctx.strokeStyle = `rgba(52, 211, 153, ${auraAlpha})`;
+                ctx.lineWidth = 1;
+                ctx.shadowColor = 'rgba(16, 185, 129, 0.75)';
+                ctx.shadowBlur = 8 + pulse * 8;
+                ctx.strokeRect(bx, by, bw, bh);
+                ctx.restore();
+              } else {
+                ctx.fillStyle = isRecognized ? 'rgba(16, 185, 129, 0.08)' : 'rgba(34, 211, 238, 0.08)';
+                ctx.fillRect(bx, by, bw, bh);
+              }
+
+              // 3. Tactical glowing corner brackets with breathing luminescence
               const bracketLen = Math.min(bw, bh) * 0.28;
-              ctx.lineWidth = isSelected ? 3 : 2;
-              ctx.strokeStyle = isRecognized ? '#10b981' : '#22d3ee';
-              ctx.shadowColor = isRecognized ? 'rgba(16, 185, 129, 0.5)' : 'rgba(34, 211, 238, 0.6)';
-              ctx.shadowBlur = 8;
+              ctx.save();
+              ctx.lineWidth = isSelected ? 3.5 : isHighConfidence ? 2.5 : 2;
+
+              if (isHighConfidence) {
+                // Modulate corner stroke and shadow blur for luminous glow
+                ctx.strokeStyle = pulse > 0.4 ? '#34d399' : '#10b981';
+                ctx.shadowColor = 'rgba(52, 211, 153, ' + (0.6 + pulse * 0.35) + ')';
+                ctx.shadowBlur = 10 + pulse * 10;
+              } else {
+                ctx.strokeStyle = isRecognized ? '#10b981' : '#22d3ee';
+                ctx.shadowColor = isRecognized ? 'rgba(16, 185, 129, 0.5)' : 'rgba(34, 211, 238, 0.6)';
+                ctx.shadowBlur = 8;
+              }
 
               // Top-Left
               ctx.beginPath();
@@ -354,22 +405,27 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
               ctx.lineTo(bx + bw, by + bh - bracketLen);
               ctx.stroke();
 
-              // Reset shadow for text
-              ctx.shadowBlur = 0;
+              ctx.restore();
 
-              // Sleek Interface Match Banner on top of bounding box
+              // 4. Sleek Interface Match Banner on top of bounding box with recognition glow
               const matchBannerText = isRecognized
                 ? `مجاز: ${toPersianDigits(face.confidence)}٪`
                 : `تطابق: ${toPersianDigits(face.confidence)}٪`;
 
               ctx.font = 'bold 10px JetBrains Mono, Vazirmatn, sans-serif';
               const textMetrics = ctx.measureText(matchBannerText);
-              const bannerW = textMetrics.width + 12;
+              const bannerW = textMetrics.width + (isHighConfidence ? 16 : 12);
               const bannerH = 18;
 
+              ctx.save();
+              if (isHighConfidence) {
+                ctx.shadowColor = 'rgba(16, 185, 129, ' + (0.55 + pulse * 0.35) + ')';
+                ctx.shadowBlur = 8 + pulse * 6;
+              }
               // Banner Background
               ctx.fillStyle = isRecognized ? '#10b981' : '#22d3ee';
               ctx.fillRect(bx, Math.max(2, by - bannerH), bannerW, bannerH);
+              ctx.restore();
 
               // Banner Text
               ctx.fillStyle = '#000000';
@@ -377,7 +433,7 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
               ctx.textBaseline = 'middle';
               ctx.fillText(matchBannerText, bx + bannerW / 2, Math.max(2, by - bannerH) + bannerH / 2);
 
-              // Label Pill underneath with person name or unknown subject ID
+              // 5. Label Pill underneath with person name or unknown subject ID
               const labelText = isRecognized
                 ? face.recognizedPerson?.fullName || 'پرسنل مجاز'
                 : `سوژه #${toPersianDigits(face.trackingId)}`;
@@ -387,11 +443,21 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
               const nameW = nameMetrics.width + 14;
               const nameH = 20;
 
-              ctx.fillStyle = 'rgba(2, 6, 23, 0.9)';
-              ctx.strokeStyle = isRecognized ? '#10b981' : '#22d3ee';
-              ctx.lineWidth = 1;
+              ctx.save();
+              if (isHighConfidence) {
+                ctx.shadowColor = 'rgba(16, 185, 129, ' + (0.35 + pulse * 0.3) + ')';
+                ctx.shadowBlur = 6 + pulse * 4;
+              }
+              ctx.fillStyle = 'rgba(2, 6, 23, 0.92)';
+              ctx.strokeStyle = isHighConfidence
+                ? (pulse > 0.4 ? '#34d399' : '#10b981')
+                : isRecognized
+                ? '#10b981'
+                : '#22d3ee';
+              ctx.lineWidth = isHighConfidence ? 1.5 : 1;
               ctx.fillRect(bx, by + bh + 3, nameW, nameH);
               ctx.strokeRect(bx, by + bh + 3, nameW, nameH);
+              ctx.restore();
 
               ctx.fillStyle = '#ffffff';
               ctx.textAlign = 'center';
