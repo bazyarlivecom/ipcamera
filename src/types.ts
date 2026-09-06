@@ -61,12 +61,14 @@ export interface CameraConfig {
   id: string;
   name: string;
   ipAddress: string;
-  streamType: 'mjpeg' | 'snapshot' | 'webcam' | 'simulation';
+  streamType: 'mjpeg' | 'snapshot' | 'webcam' | 'simulation' | 'video_file';
   streamUrl: string;
   location: string;
   isActive: boolean;
   resolution?: string;
   fps?: number;
+  videoFileName?: string;
+  videoFileSize?: string;
 }
 
 export interface SystemStats {

@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Film, Upload } from 'lucide-react';
 import { Header } from './components/Header';
 import { StatsBanner } from './components/StatsBanner';
 import { CctvStreamPlayer } from './components/CctvStreamPlayer';
@@ -19,6 +20,9 @@ export default function App() {
   const [detectedFaces, setDetectedFaces] = useState<DetectedFace[]>([]);
   const [faceThumbnails, setFaceThumbnails] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
+
+  // File input ref for quick video testing
+  const globalVideoInputRef = useRef<HTMLInputElement | null>(null);
 
   // Audio alerts
   const [audioEnabled, setAudioEnabled] = useState(true);
@@ -293,6 +297,45 @@ export default function App() {
     });
   };
 
+  // Video file testing handler
+  const handleSelectLocalVideo = (file: File) => {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    const newVideoCam: CameraConfig = {
+      id: `cam-video-${Date.now()}`,
+      name: `ویدیو تستی: ${file.name.length > 20 ? file.name.slice(0, 17) + '...' : file.name}`,
+      ipAddress: 'LOCAL_VIDEO_FILE',
+      streamType: 'video_file',
+      streamUrl: url,
+      location: 'محیط تست و دیباگ چهره',
+      isActive: true,
+      resolution: 'فایل محلی',
+      fps: 30,
+      videoFileName: file.name,
+      videoFileSize: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
+    };
+    setCameras((prev) => [newVideoCam, ...prev.filter((c) => c.id !== newVideoCam.id)]);
+    setActiveCamera(newVideoCam);
+  };
+
+  // Preset debug video handler
+  const handleSelectPresetVideo = (title: string, url: string) => {
+    const newVideoCam: CameraConfig = {
+      id: `cam-preset-${Date.now()}`,
+      name: title,
+      ipAddress: 'PRESET_VIDEO',
+      streamType: 'video_file',
+      streamUrl: url,
+      location: 'آزمایشگاه تست و دیباگ',
+      isActive: true,
+      resolution: '1920x1080',
+      fps: 30,
+      videoFileName: title,
+    };
+    setCameras((prev) => [newVideoCam, ...prev.filter((c) => c.id !== newVideoCam.id)]);
+    setActiveCamera(newVideoCam);
+  };
+
   // Computed statistics
   const recognizedCount = logs.filter((l) => l.isRecognized).length;
   const unknownCount = logs.filter((l) => !l.isRecognized).length;
@@ -331,6 +374,19 @@ export default function App() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           {/* 2-Columns: CCTV Player with Bounding Boxes & Controls */}
           <div className="lg:col-span-2">
+            {/* Hidden file picker for quick video testing */}
+            <input
+              type="file"
+              ref={globalVideoInputRef}
+              accept="video/mp4,video/webm,video/ogg,video/quicktime,video/x-msvideo,video/*"
+              onChange={(e) => {
+                if (e.target.files && e.target.files[0]) {
+                  handleSelectLocalVideo(e.target.files[0]);
+                }
+              }}
+              className="hidden"
+            />
+
             {activeCamera ? (
               <CctvStreamPlayer
                 activeCamera={activeCamera}
@@ -339,6 +395,8 @@ export default function App() {
                 onSelectFaceToInspect={handleOpenFaceInspect}
                 onAutoLogTraffic={handleSaveTrafficLog}
                 autoLogEnabled={autoLogEnabled}
+                onSelectLocalVideo={handleSelectLocalVideo}
+                onSelectPresetVideo={handleSelectPresetVideo}
               />
             ) : (
               <div className="aspect-video bg-slate-900 rounded-2xl flex items-center justify-center border border-slate-800">
@@ -348,22 +406,33 @@ export default function App() {
 
             {/* Quick Stream Selector Tabs */}
             <div className="mt-2.5 flex items-center justify-between flex-wrap gap-2 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="text-slate-500 font-mono text-[11px] uppercase tracking-wider">سوئیچ دوربین (SOURCE):</span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-slate-500 font-mono text-[11px] uppercase tracking-wider">منبع ورودی (FEED):</span>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {cameras.map((c) => (
                     <button
                       key={c.id}
                       onClick={() => setActiveCamera(c)}
-                      className={`px-2.5 py-1 rounded-md border font-mono text-xs transition-all ${
+                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border font-mono text-xs transition-all ${
                         activeCamera?.id === c.id
                           ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300 font-semibold shadow-sm shadow-cyan-500/10'
                           : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800'
                       }`}
                     >
-                      {c.name}
+                      {c.streamType === 'video_file' && <Film className="w-3 h-3 text-cyan-400" />}
+                      <span>{c.name}</span>
                     </button>
                   ))}
+
+                  {/* Dedicated Quick Button for Testing Video Files */}
+                  <button
+                    onClick={() => globalVideoInputRef.current?.click()}
+                    title="انتخاب فایل ویدیو از سیستم جهت آزمایش و دیباگ الگوریتم تشخیص چهره"
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 text-white font-medium text-xs shadow-sm transition-all active:scale-95"
+                  >
+                    <Film className="w-3.5 h-3.5" />
+                    <span>+ انتخاب فیلم تست و دیباگ</span>
+                  </button>
                 </div>
               </div>
 

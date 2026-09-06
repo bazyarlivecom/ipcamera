@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   X,
   Camera,
@@ -10,6 +10,8 @@ import {
   Wifi,
   Video,
   Monitor,
+  Film,
+  Upload,
 } from 'lucide-react';
 import { CameraConfig } from '../types';
 
@@ -36,6 +38,21 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
   const [streamType, setStreamType] = useState<CameraConfig['streamType']>('simulation');
   const [streamUrl, setStreamUrl] = useState('');
   const [location, setLocation] = useState('');
+  const [videoFileName, setVideoFileName] = useState('');
+  const [videoFileSize, setVideoFileSize] = useState('');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleFilePicked = (file: File) => {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setName(`ویدیو تستی: ${file.name.length > 25 ? file.name.slice(0, 22) + '...' : file.name}`);
+    setIpAddress('LOCAL_VIDEO');
+    setStreamUrl(url);
+    setLocation('آزمایشگاه تست و دیباگ');
+    setVideoFileName(file.name);
+    setVideoFileSize((file.size / (1024 * 1024)).toFixed(1) + ' MB');
+    setStreamType('video_file');
+  };
 
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,12 +71,16 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
       isActive: true,
       resolution: '1920x1080',
       fps: 25,
+      videoFileName: videoFileName || undefined,
+      videoFileSize: videoFileSize || undefined,
     });
 
     setName('');
     setIpAddress('192.168.1.');
     setStreamUrl('');
     setLocation('');
+    setVideoFileName('');
+    setVideoFileSize('');
     setShowAddForm(false);
   };
 
@@ -147,6 +168,7 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
                     className="w-full px-3 py-1.5 rounded-md bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-cyan-500 font-mono"
                   >
                     <option value="simulation">شبیه‌ساز تصویر مداربسته (CCTV Test Feed)</option>
+                    <option value="video_file">فایل ویدیویی محلی (ویدیو برای تست و دیباگ سیستم)</option>
                     <option value="webcam">دوربین زنده سیستم/وبکم (Live Webcam Input)</option>
                     <option value="mjpeg">استریم زنده شبکه IP (MJPEG/HTTP Stream)</option>
                     <option value="snapshot">دریافت تصاویر پی‌درپی اسنپ‌شات (JPEG Polling)</option>
@@ -165,18 +187,59 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs text-slate-300 mb-1 font-mono">
-                  آدرس URL استریم / اسنپ‌شات (FEED URL):
-                </label>
-                <input
-                  type="text"
-                  value={streamUrl}
-                  onChange={(e) => setStreamUrl(e.target.value)}
-                  placeholder="http://192.168.1.120:8080/video یا آدرس تصویر دوربین"
-                  className="w-full px-3 py-1.5 rounded-md bg-slate-900 border border-slate-700 text-xs text-white font-mono focus:outline-none focus:border-cyan-500"
-                />
-              </div>
+              {/* Local Video File Picker Section if video_file selected */}
+              {streamType === 'video_file' ? (
+                <div className="p-3 bg-cyan-950/20 border border-cyan-500/30 rounded-lg space-y-2">
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept="video/mp4,video/webm,video/ogg,video/quicktime,video/x-msvideo,video/*"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        handleFilePicked(e.target.files[0]);
+                      }
+                    }}
+                    className="hidden"
+                  />
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-cyan-300 font-medium flex items-center gap-1.5">
+                      <Film className="w-3.5 h-3.5" />
+                      فایل ویدیویی محلی جهت بررسی و دیباگ چهره:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="px-2.5 py-1 rounded bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>{videoFileName ? 'تغییر فایل ویدیو' : 'انتخاب فیلم از سیستم'}</span>
+                    </button>
+                  </div>
+                  {videoFileName ? (
+                    <div className="text-[11px] font-mono text-slate-300 bg-slate-900/90 p-2 rounded border border-slate-800 flex items-center justify-between">
+                      <span className="text-cyan-400 font-semibold truncate max-w-xs">{videoFileName}</span>
+                      <span className="text-slate-400">{videoFileSize}</span>
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-slate-400">
+                      یک فایل فیلم (مانند MP4 یا WebM) انتخاب نمایید تا سیستم روی فریم‌های آن پردازش و استخراج چهره را اجرا کند.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs text-slate-300 mb-1 font-mono">
+                    آدرس URL استریم / اسنپ‌شات (FEED URL):
+                  </label>
+                  <input
+                    type="text"
+                    value={streamUrl}
+                    onChange={(e) => setStreamUrl(e.target.value)}
+                    placeholder="http://192.168.1.120:8080/video یا آدرس تصویر دوربین"
+                    className="w-full px-3 py-1.5 rounded-md bg-slate-900 border border-slate-700 text-xs text-white font-mono focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+              )}
 
               <div className="flex justify-end gap-2 pt-2">
                 <button
@@ -217,7 +280,9 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
                           : 'bg-slate-800 text-slate-400'
                       }`}
                     >
-                      {cam.streamType === 'webcam' ? (
+                      {cam.streamType === 'video_file' ? (
+                        <Film className="w-4 h-4 text-cyan-400" />
+                      ) : cam.streamType === 'webcam' ? (
                         <Video className="w-4 h-4" />
                       ) : (
                         <Camera className="w-4 h-4" />
@@ -229,7 +294,7 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
                         <h4 className="text-xs font-bold text-white font-mono">{cam.name}</h4>
                         {isActive && (
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                            LIVE FEED
+                            {cam.streamType === 'video_file' ? 'DEBUG VIDEO' : 'LIVE FEED'}
                           </span>
                         )}
                       </div>
@@ -239,7 +304,9 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
                         <span className="font-sans">{cam.location}</span>
                         <span>•</span>
                         <span className="text-slate-500">
-                          {cam.streamType === 'webcam'
+                          {cam.streamType === 'video_file'
+                            ? 'VIDEO FILE'
+                            : cam.streamType === 'webcam'
                             ? 'WEBCAM'
                             : cam.streamType === 'simulation'
                             ? 'SIMULATION'
