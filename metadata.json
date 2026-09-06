@@ -1,0 +1,10 @@
+{
+  "name": "سیستم هوشمند پایش و تشخیص چهره دوربین IP",
+  "description": "دریافت تصویر دوربین مدار بسته، ردیابی و بزرگنمایی چهره‌ها، ثبت دقیق ترددها در دیتابیس آنلاین لحظه‌ای",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

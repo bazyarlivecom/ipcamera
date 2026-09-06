@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+:root {
+  --font-persian: 'Vazirmatn', 'Alexandria', 'Readex Pro', system-ui, -apple-system, sans-serif;
+}
+
+html, body {
+  font-family: var(--font-persian);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button, input, select, textarea, optgroup {
+  font-family: inherit;
+}
+
+/* Ensure mono elements strictly use JetBrains Mono */
+.font-mono, [class*="font-mono"] {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  letter-spacing: -0.01em;
+}
+
+@layer utilities {
+  .bg-dot-grid {
+    background-image: radial-gradient(#334155 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+  .glow-cyan {
+    box-shadow: 0 0 15px rgba(34, 211, 238, 0.35);
+  }
+  .glow-emerald {
+    box-shadow: 0 0 8px #10b981;
+  }
+}
+
+/* Custom sleek scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: #020617;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
