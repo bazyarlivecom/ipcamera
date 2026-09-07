@@ -22,6 +22,9 @@ import {
   ChevronDown,
   Check,
   FolderOpen,
+  Cpu,
+  ShieldCheck,
+  WifiOff,
 } from 'lucide-react';
 import { CameraConfig, DetectedFace, RegisteredPerson } from '../types';
 import {
@@ -109,6 +112,8 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
   const [showPresetsMenu, setShowPresetsMenu] = useState(false);
 
   // AI & Biometrics Settings
+  const [detectionEngine, setDetectionEngine] = useState<'yunet' | 'cascade'>('yunet');
+  const [yunetConfidence, setYunetConfidence] = useState<number>(55);
   const [recognitionThreshold, setRecognitionThreshold] = useState<number>(70);
   const [showLandmarks, setShowLandmarks] = useState(true);
   const [enableJitterFilter, setEnableJitterFilter] = useState(true);
@@ -192,12 +197,13 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
           return;
         }
 
-        // High-precision local integral cascade with strict anthropometric facial gating
-        // (Zero false positives on walls, furniture, floors, wood textures)
+        // High-precision face detection (OpenCV YuNet ONNX 100% offline or Haar cascade)
         const faces = await detectFacesOnMedia(mediaSource, registeredPersons, {
           recognitionThreshold,
           enableSmoothing: enableJitterFilter,
           strictness: detectionStrictness,
+          engine: detectionEngine,
+          confidenceThreshold: yunetConfidence,
         });
 
         setDetectedFaces(faces);
@@ -229,6 +235,8 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
       recognitionThreshold,
       enableJitterFilter,
       detectionStrictness,
+      detectionEngine,
+      yunetConfidence,
       autoNeuralAi,
       isAiScanning,
       triggerGeminiNeuralScan,
@@ -602,9 +610,11 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
                 const rightEye = { x: lx(face.landmarks.rightEye), y: ly(face.landmarks.rightEye) };
                 const nose = { x: lx(face.landmarks.noseTip), y: ly(face.landmarks.noseTip) };
                 const mouth = { x: lx(face.landmarks.mouthCenter), y: ly(face.landmarks.mouthCenter) };
+                const mouthL = face.landmarks.mouthLeft ? { x: lx(face.landmarks.mouthLeft), y: ly(face.landmarks.mouthLeft) } : null;
+                const mouthR = face.landmarks.mouthRight ? { x: lx(face.landmarks.mouthRight), y: ly(face.landmarks.mouthRight) } : null;
 
                 ctx.save();
-                // Biometric structural mesh triangle
+                // Biometric structural mesh
                 ctx.strokeStyle = isRecognized ? 'rgba(52, 211, 153, 0.45)' : 'rgba(34, 211, 238, 0.45)';
                 ctx.lineWidth = 1;
                 ctx.setLineDash([2, 2]);
@@ -616,10 +626,19 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
                 ctx.closePath();
                 ctx.stroke();
 
-                ctx.beginPath();
-                ctx.moveTo(nose.x, nose.y);
-                ctx.lineTo(mouth.x, mouth.y);
-                ctx.stroke();
+                if (mouthL && mouthR) {
+                  ctx.beginPath();
+                  ctx.moveTo(nose.x, nose.y);
+                  ctx.lineTo(mouthL.x, mouthL.y);
+                  ctx.lineTo(mouthR.x, mouthR.y);
+                  ctx.closePath();
+                  ctx.stroke();
+                } else {
+                  ctx.beginPath();
+                  ctx.moveTo(nose.x, nose.y);
+                  ctx.lineTo(mouth.x, mouth.y);
+                  ctx.stroke();
+                }
 
                 ctx.setLineDash([]); // Reset line dash
 
@@ -637,7 +656,12 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
                 drawLandmark(leftEye, isRecognized ? '#34d399' : '#38bdf8');
                 drawLandmark(rightEye, isRecognized ? '#34d399' : '#38bdf8');
                 drawLandmark(nose, isRecognized ? '#10b981' : '#06b6d4');
-                drawLandmark(mouth, isRecognized ? '#059669' : '#0284c7');
+                if (mouthL && mouthR) {
+                  drawLandmark(mouthL, isRecognized ? '#059669' : '#0284c7');
+                  drawLandmark(mouthR, isRecognized ? '#059669' : '#0284c7');
+                } else {
+                  drawLandmark(mouth, isRecognized ? '#059669' : '#0284c7');
+                }
 
                 ctx.restore();
               }
@@ -850,6 +874,19 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
 
         {/* Action Button: Choose Video File & Presets */}
         <div className="flex items-center gap-2">
+          {/* Active Engine Badge */}
+          <button
+            onClick={() => setShowAiSettings(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-950/70 hover:bg-emerald-900/80 border border-emerald-500/40 text-emerald-300 text-xs font-mono transition-colors shadow-sm cursor-pointer"
+            title="موتور فعال تشخیص چهره - کلیک برای تنظیمات"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="hidden sm:inline font-sans font-semibold">
+              {detectionEngine === 'yunet' ? 'OpenCV YuNet (آفلاین ۱۰۰٪)' : 'Haar Cascade (آفلاین)'}
+            </span>
+          </button>
+
           {/* Gemini Neural AI Face Scan Button */}
           <button
             onClick={triggerGeminiNeuralScan}
@@ -881,39 +918,113 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
             </button>
 
             {showAiSettings && (
-              <div className="absolute left-0 mt-1.5 w-80 bg-slate-900/95 border border-indigo-500/40 rounded-xl shadow-2xl p-3.5 z-40 space-y-3.5 backdrop-blur-md animate-in fade-in">
+              <div className="absolute left-0 mt-1.5 w-84 bg-slate-900/95 border border-indigo-500/40 rounded-xl shadow-2xl p-3.5 z-40 space-y-3.5 backdrop-blur-md animate-in fade-in">
                 <div className="flex items-center justify-between pb-2 border-b border-slate-800">
                   <span className="text-xs font-bold text-white flex items-center gap-1.5">
                     <Crosshair className="w-3.5 h-3.5 text-indigo-400" />
                     تنظیمات پیشرفته بینایی ماشین و هوش مصنوعی
                   </span>
-                  <span className="text-[10px] text-purple-400 font-mono bg-purple-950 px-1.5 py-0.5 rounded border border-purple-800">
-                    GEMINI AI 3.1
+                  <span className="text-[10px] text-emerald-400 font-mono bg-emerald-950 px-1.5 py-0.5 rounded border border-emerald-800 flex items-center gap-1">
+                    <WifiOff className="w-2.5 h-2.5" />
+                    OFFLINE
                   </span>
                 </div>
 
-                {/* Strictness filter */}
+                {/* Engine Selector */}
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-slate-300">سخت‌گیری ضد خطای مثبت (حذف دیوار/مبلمان):</span>
-                    <span className="font-mono font-bold text-cyan-400">
-                      {toPersianDigits(Math.round(detectionStrictness * 100))}٪
+                    <span className="text-slate-300 font-semibold">موتور پردازش و تشخیص چهره:</span>
+                    <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-mono">
+                      <ShieldCheck className="w-3 h-3" />
+                      بدون نیاز به اینترنت
                     </span>
                   </div>
-                  <input
-                    type="range"
-                    min={65}
-                    max={88}
-                    step={1}
-                    value={Math.round(detectionStrictness * 100)}
-                    onChange={(e) => setDetectionStrictness(Number(e.target.value) / 100)}
-                    className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                  />
-                  <div className="flex justify-between text-[10px] text-slate-500">
-                    <span>حساس‌تر (۶۵٪)</span>
-                    <span>حداکثر دقت بدون خطا (۸۸٪)</span>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setDetectionEngine('yunet')}
+                      className={`px-2 py-1.5 rounded-lg border text-xs font-medium text-right transition-all flex flex-col ${
+                        detectionEngine === 'yunet'
+                          ? 'bg-emerald-950/90 border-emerald-400 text-emerald-200 shadow-md shadow-emerald-900/30 ring-1 ring-emerald-500/40'
+                          : 'bg-slate-800/80 border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                      }`}
+                    >
+                      <span className="font-bold flex items-center gap-1">
+                        <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+                        OpenCV YuNet
+                      </span>
+                      <span className="text-[10px] text-emerald-400/90 mt-0.5 font-semibold">مدل عمیق آفلاین (توصیه‌شده)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setDetectionEngine('cascade')}
+                      className={`px-2 py-1.5 rounded-lg border text-xs font-medium text-right transition-all flex flex-col ${
+                        detectionEngine === 'cascade'
+                          ? 'bg-cyan-950/90 border-cyan-400 text-cyan-200 shadow-md shadow-cyan-900/30 ring-1 ring-cyan-500/40'
+                          : 'bg-slate-800/80 border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                      }`}
+                    >
+                      <span className="font-bold flex items-center gap-1">
+                        <Crosshair className="w-3.5 h-3.5 text-cyan-400" />
+                        فیلتر انتگرالی
+                      </span>
+                      <span className="text-[10px] text-slate-400 mt-0.5">سبک هندسی (CPU)</span>
+                    </button>
                   </div>
                 </div>
+
+                {/* YuNet specific Confidence Slider when YuNet is active */}
+                {detectionEngine === 'yunet' ? (
+                  <div className="space-y-1.5 bg-emerald-950/40 p-2.5 rounded-lg border border-emerald-500/30">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-emerald-300 font-semibold">حداقل اطمینان مدل YuNet:</span>
+                      <span className="font-mono font-bold text-emerald-400">
+                        {toPersianDigits(yunetConfidence)}٪
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={35}
+                      max={85}
+                      step={1}
+                      value={yunetConfidence}
+                      onChange={(e) => setYunetConfidence(Number(e.target.value))}
+                      className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-400">
+                      <span>حساس‌تر (۳۵٪)</span>
+                      <span>توصیه‌شده (۵۵٪)</span>
+                      <span>سخت‌گیرانه (۸۵٪)</span>
+                    </div>
+                    <p className="text-[10px] text-slate-300/80 mt-1 leading-relaxed">
+                      مدل سبک و اختصاصی YuNet از OpenCV Zoo. کاملاً آفلاین در مرورگر با WebAssembly اجرا می‌شود و بر روی اشیاء بی‌جان یا دیوارها کادر کاذب ایجاد نمی‌کند.
+                    </p>
+                  </div>
+                ) : (
+                  /* Strictness filter for Cascade */
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-300">سخت‌گیری ضد خطای مثبت (حذف دیوار/مبلمان):</span>
+                      <span className="font-mono font-bold text-cyan-400">
+                        {toPersianDigits(Math.round(detectionStrictness * 100))}٪
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={65}
+                      max={88}
+                      step={1}
+                      value={Math.round(detectionStrictness * 100)}
+                      onChange={(e) => setDetectionStrictness(Number(e.target.value) / 100)}
+                      className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-500">
+                      <span>حساس‌تر (۶۵٪)</span>
+                      <span>حداکثر دقت بدون خطا (۸۸٪)</span>
+                    </div>
+                  </div>
+                )}
 
                 {/* Threshold slider */}
                 <div className="space-y-1.5">

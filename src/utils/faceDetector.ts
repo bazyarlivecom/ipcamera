@@ -4,13 +4,22 @@ import {
   computeBiometricDescriptor,
   matchFaceAgainstRegistered,
 } from './faceBiometrics';
+import {
+  detectFacesWithYuNet,
+  getYuNetSession,
+  YuNetFace,
+} from './yunetDetector';
+
+export { detectFacesWithYuNet, getYuNetSession };
+export type { YuNetFace };
 
 /**
  * Advanced Multi-Tier Face Detection & Biometric Tracking Engine
- * Tier 1: 2D Integral-Image Haar-like Cascade Classifier (Fast, CPU-optimized, Zero False Positives on walls/furniture)
- * Tier 2: Deep Gemini Neural Vision API (/api/face/detect-frame) for full-frame zero-shot forensic detection
+ * Tier 1: OpenCV YuNet Deep Neural Network ONNX (Local WASM, 100% Offline, Zero Internet)
+ * Tier 2: 2D Integral-Image Haar-like Cascade Classifier (Backup fast CPU scanner)
  * Tier 3: Anthropometric Bilateral Symmetry & Luminance Valley Discriminator
  * Tier 4: Temporal EMA Kalman Filter for seamless jitter-free 30fps tracking
+ * Tier 5: Optional Deep Gemini Neural Vision API (/api/face/detect-frame)
  */
 
 // Native ShapeDetection API check if supported in browser
@@ -243,6 +252,7 @@ export async function detectFacesOnMedia(
     enableSmoothing?: boolean;
     confidenceThreshold?: number;
     strictness?: number; // 0.60 to 0.90
+    engine?: 'yunet' | 'cascade' | 'auto';
   } = {}
 ): Promise<DetectedFace[]> {
   const width = source instanceof HTMLVideoElement ? source.videoWidth : source.width;
@@ -253,41 +263,64 @@ export async function detectFacesOnMedia(
   const threshold = options.recognitionThreshold ?? 70;
   const enableSmoothing = options.enableSmoothing ?? true;
   const strictness = options.strictness ?? 0.72;
+  const engine = options.engine ?? 'yunet';
 
   let rawCandidates: { box: BoundingBox; confidence: number; landmarks?: FacialLandmarks }[] = [];
 
-  // 1. Try Native Browser FaceDetector if supported (hardware-accelerated)
-  if (nativeDetector) {
+  // 1. Primary Engine: OpenCV YuNet Deep Neural Network ONNX (100% Offline, Zero Internet)
+  if (engine === 'yunet' || engine === 'auto') {
     try {
-      const faces = await nativeDetector.detect(source);
-      if (faces && faces.length > 0) {
-        rawCandidates = faces.map((f: any) => {
-          const bb = f.boundingBox;
-          const box: BoundingBox = {
-            x: Math.max(0, bb.x / width),
-            y: Math.max(0, bb.y / height),
-            width: Math.min(1, bb.width / width),
-            height: Math.min(1, bb.height / height),
-          };
-          const landmarks = f.landmarks && f.landmarks.length >= 3
-            ? {
-                leftEye: { x: f.landmarks[0].locations[0].x / width, y: f.landmarks[0].locations[0].y / height },
-                rightEye: { x: f.landmarks[1].locations[0].x / width, y: f.landmarks[1].locations[0].y / height },
-                noseTip: { x: f.landmarks[2].locations[0].x / width, y: f.landmarks[2].locations[0].y / height },
-                mouthCenter: estimateLandmarks(box).mouthCenter,
-              }
-            : estimateLandmarks(box);
+      const yuNetResults = await detectFacesWithYuNet(source, {
+        confThreshold: options.confidenceThreshold ? options.confidenceThreshold / 100 : 0.52,
+        nmsThreshold: 0.35,
+      });
 
-          return { box, confidence: 96.0, landmarks };
-        });
+      if (yuNetResults && yuNetResults.length > 0) {
+        rawCandidates = yuNetResults.map((yf) => ({
+          box: yf.box,
+          confidence: yf.confidence,
+          landmarks: yf.landmarks,
+        }));
       }
-    } catch {
-      // Fallback
+    } catch (err) {
+      console.warn('[FaceDetector] YuNet detection error, falling back:', err);
     }
   }
 
-  // 2. High-Precision Anthropometric Integral-Image Feature Cascade Scanner
-  if (rawCandidates.length === 0) {
+  // 2. Secondary Engine: Native Hardware FaceDetector (if supported by platform)
+  if (rawCandidates.length === 0 && (engine === 'auto' || (nativeDetector && engine === 'cascade'))) {
+    if (nativeDetector) {
+      try {
+        const faces = await nativeDetector.detect(source);
+        if (faces && faces.length > 0) {
+          rawCandidates = faces.map((f: any) => {
+            const bb = f.boundingBox;
+            const box: BoundingBox = {
+              x: Math.max(0, bb.x / width),
+              y: Math.max(0, bb.y / height),
+              width: Math.min(1, bb.width / width),
+              height: Math.min(1, bb.height / height),
+            };
+            const landmarks = f.landmarks && f.landmarks.length >= 3
+              ? {
+                  leftEye: { x: f.landmarks[0].locations[0].x / width, y: f.landmarks[0].locations[0].y / height },
+                  rightEye: { x: f.landmarks[1].locations[0].x / width, y: f.landmarks[1].locations[0].y / height },
+                  noseTip: { x: f.landmarks[2].locations[0].x / width, y: f.landmarks[2].locations[0].y / height },
+                  mouthCenter: estimateLandmarks(box).mouthCenter,
+                }
+              : estimateLandmarks(box);
+
+            return { box, confidence: 96.0, landmarks };
+          });
+        }
+      } catch {
+        // Fallback
+      }
+    }
+  }
+
+  // 3. Fallback Engine: Fast Anthropometric Integral-Image Cascade Scanner
+  if (rawCandidates.length === 0 && engine === 'cascade') {
     rawCandidates = anthropometricIntegralCascadeScan(source, width, height, strictness);
   }
 

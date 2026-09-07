@@ -15,6 +15,8 @@ export interface FacialLandmarks {
   rightEye: FacialPoint;
   noseTip: FacialPoint;
   mouthCenter: FacialPoint;
+  mouthLeft?: FacialPoint;
+  mouthRight?: FacialPoint;
 }
 
 export interface DetectedFace {
