@@ -77,6 +77,7 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
   onSelectPresetVideo,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
   const canvasOverlayRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -125,9 +126,9 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
 
   // Core face detection helper
   const runDetection = useCallback(
-    async (video: HTMLVideoElement) => {
+    async (mediaSource: HTMLVideoElement | HTMLImageElement) => {
       try {
-        let faces = await detectFacesOnMedia(video, registeredPersons);
+        let faces = await detectFacesOnMedia(mediaSource, registeredPersons);
 
         // If no face found in video, simulate smart demo tracking targets for testing if in simulation mode
         if (faces.length === 0 && activeCamera.streamType === 'simulation') {
@@ -184,7 +185,7 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
         const thumbMap: Record<string, string> = {};
         const nowMs = Date.now();
         faces.forEach((f) => {
-          const thumb = cropFaceToDataUrl(video, f.box, 180);
+          const thumb = cropFaceToDataUrl(mediaSource, f.box, 180);
           thumbMap[f.id] = thumb;
 
           // Auto log traffic logic with 15-second cooldown per trackingId
@@ -229,8 +230,30 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
             videoRef.current.play().catch(() => {});
             setIsPlaying(true);
           }
+        } else if (['dahua', 'mjpeg', 'snapshot'].includes(activeCamera.streamType)) {
+          if (imgRef.current) {
+            let targetUrl = activeCamera.streamUrl;
+            let username = '';
+            let password = '';
+            
+            if (activeCamera.streamType === 'dahua') {
+              const ip = activeCamera.ipAddress || '192.168.1.55';
+              const channel = activeCamera.dahuaChannel || 1;
+              targetUrl = `http://${ip}/cgi-bin/mjpg/video.cgi?channel=${channel}&subtype=1`;
+              username = activeCamera.dahuaUsername || 'admin';
+              password = activeCamera.dahuaPassword || '';
+            }
+
+            const proxyUrl = `/api/camera/proxy?url=${encodeURIComponent(targetUrl)}&stream=true${
+              username ? `&username=${encodeURIComponent(username)}` : ''
+            }${password ? `&password=${encodeURIComponent(password)}` : ''}`;
+
+            imgRef.current.crossOrigin = 'anonymous';
+            imgRef.current.src = proxyUrl;
+            setIsPlaying(true);
+          }
         } else {
-          // Video file, Simulation, or IP Camera stream URL
+          // Video file or Simulation
           if (videoRef.current) {
             videoRef.current.srcObject = null;
             videoRef.current.crossOrigin = 'anonymous';
@@ -282,13 +305,17 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
 
     const processLoop = async (now: number) => {
       const video = videoRef.current;
+      const img = imgRef.current;
       const canvas = canvasOverlayRef.current;
+      const isVideoReady = video && video.readyState >= 2;
+      const isImgReady = img && img.complete && img.naturalWidth > 0;
+      const mediaSource = isVideoReady ? video : (isImgReady ? img : null);
 
-      if (video && canvas && video.readyState >= 2) {
-        // Match canvas dimensions to container / video aspect
-        if (canvas.width !== video.clientWidth || canvas.height !== video.clientHeight) {
-          canvas.width = video.clientWidth;
-          canvas.height = video.clientHeight;
+      if (mediaSource && canvas) {
+        // Match canvas dimensions to container / media aspect
+        if (canvas.width !== mediaSource.clientWidth || canvas.height !== mediaSource.clientHeight) {
+          canvas.width = mediaSource.clientWidth;
+          canvas.height = mediaSource.clientHeight;
         }
 
         const ctx = canvas.getContext('2d');
@@ -298,7 +325,7 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
           // Periodic face detection when playing
           if (isPlaying && now - lastScanTime > scanInterval) {
             lastScanTime = now;
-            await runDetection(video);
+            await runDetection(mediaSource);
           }
 
           // Draw Bounding Boxes on Overlay Canvas (Always draw even when paused for forensic freeze-frame)
@@ -791,27 +818,38 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
           </div>
         ) : (
           <>
-            <video
-              ref={videoRef}
-              playsInline
-              autoPlay
-              muted
-              onTimeUpdate={() => {
-                if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
-              }}
-              onLoadedMetadata={() => {
-                if (videoRef.current) {
-                  setDuration(videoRef.current.duration);
-                  setCurrentTime(videoRef.current.currentTime);
-                }
-              }}
-              onEnded={() => {
-                if (!isLooping) setIsPlaying(false);
-              }}
-              className={`w-full h-full object-cover transition-transform duration-300 ${
-                zoomLevel > 1 ? 'scale-125' : 'scale-100'
-              }`}
-            />
+            {['dahua', 'mjpeg', 'snapshot'].includes(activeCamera.streamType) ? (
+              <img
+                ref={imgRef}
+                alt={activeCamera.name}
+                className={`w-full h-full object-cover transition-transform duration-300 ${
+                  zoomLevel > 1 ? 'scale-125' : 'scale-100'
+                }`}
+                crossOrigin="anonymous"
+              />
+            ) : (
+              <video
+                ref={videoRef}
+                playsInline
+                autoPlay
+                muted
+                onTimeUpdate={() => {
+                  if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
+                }}
+                onLoadedMetadata={() => {
+                  if (videoRef.current) {
+                    setDuration(videoRef.current.duration);
+                    setCurrentTime(videoRef.current.currentTime);
+                  }
+                }}
+                onEnded={() => {
+                  if (!isLooping) setIsPlaying(false);
+                }}
+                className={`w-full h-full object-cover transition-transform duration-300 ${
+                  zoomLevel > 1 ? 'scale-125' : 'scale-100'
+                }`}
+              />
+            )}
 
             {/* Face Bounding Box Canvas Overlay */}
             <canvas

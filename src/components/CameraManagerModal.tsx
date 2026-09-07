@@ -12,6 +12,7 @@ import {
   Monitor,
   Film,
   Upload,
+  Search,
 } from 'lucide-react';
 import { CameraConfig } from '../types';
 
@@ -40,7 +41,39 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
   const [location, setLocation] = useState('');
   const [videoFileName, setVideoFileName] = useState('');
   const [videoFileSize, setVideoFileSize] = useState('');
+  const [dahuaUsername, setDahuaUsername] = useState('admin');
+  const [dahuaPassword, setDahuaPassword] = useState('');
+  const [dahuaChannel, setDahuaChannel] = useState(1);
+  const [isDiscovering, setIsDiscovering] = useState(false);
+  const [discoveredDevices, setDiscoveredDevices] = useState<any[]>([]);
+  const [showDiscovery, setShowDiscovery] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleDiscover = async () => {
+    setIsDiscovering(true);
+    setShowDiscovery(true);
+    setDiscoveredDevices([]);
+    try {
+      const res = await fetch('/api/camera/discover');
+      const data = await res.json();
+      if (data.success) {
+        setDiscoveredDevices(data.devices || []);
+      }
+    } catch (err) {
+      console.error('Discovery failed:', err);
+    } finally {
+      setIsDiscovering(false);
+    }
+  };
+
+  const handleSelectDiscovered = (device: any) => {
+    setShowAddForm(true);
+    setName(device.name || 'دوربین شبکه');
+    setIpAddress(device.ipAddress || '');
+    setStreamType('dahua'); // Default to dahua or mjpeg
+    setLocation(device.location || '');
+    setShowDiscovery(false);
+  };
 
   const handleFilePicked = (file: File) => {
     if (!file) return;
@@ -73,6 +106,9 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
       fps: 25,
       videoFileName: videoFileName || undefined,
       videoFileSize: videoFileSize || undefined,
+      dahuaUsername: streamType === 'dahua' ? dahuaUsername : undefined,
+      dahuaPassword: streamType === 'dahua' ? dahuaPassword : undefined,
+      dahuaChannel: streamType === 'dahua' ? dahuaChannel : undefined,
     });
 
     setName('');
@@ -81,6 +117,9 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
     setLocation('');
     setVideoFileName('');
     setVideoFileSize('');
+    setDahuaUsername('admin');
+    setDahuaPassword('');
+    setDahuaChannel(1);
     setShowAddForm(false);
   };
 
@@ -115,14 +154,72 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
             <span className="text-xs text-slate-400 font-mono">
               ACTIVE SOURCES: ({cameras.length})
             </span>
-            <button
-              onClick={() => setShowAddForm(!showAddForm)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold uppercase tracking-wider transition-colors shadow-sm"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>{showAddForm ? 'انصراف' : 'افزودن دوربین جدید'}</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleDiscover}
+                disabled={isDiscovering}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold uppercase tracking-wider transition-colors shadow-sm"
+              >
+                {isDiscovering ? (
+                  <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <Search className="w-3.5 h-3.5" />
+                )}
+                <span>{isDiscovering ? 'در حال جستجو...' : 'جستجوی شبکه'}</span>
+              </button>
+              <button
+                onClick={() => setShowAddForm(!showAddForm)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold uppercase tracking-wider transition-colors shadow-sm"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>{showAddForm ? 'انصراف' : 'افزودن دوربین جدید'}</span>
+              </button>
+            </div>
           </div>
+
+          {/* Discovery Results */}
+          {showDiscovery && (
+            <div className="p-4 rounded-lg bg-indigo-950/20 border border-indigo-500/30 space-y-3 animate-in fade-in">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold text-indigo-400 flex items-center gap-1.5 font-mono uppercase tracking-wider">
+                  <Radio className="w-3.5 h-3.5" />
+                  دوربین‌های کشف‌شده در شبکه (ONVIF)
+                </h4>
+                <button
+                  onClick={() => setShowDiscovery(false)}
+                  className="text-xs text-slate-400 hover:text-white"
+                >
+                  بستن
+                </button>
+              </div>
+              
+              {!isDiscovering && discoveredDevices.length === 0 ? (
+                <div className="text-center py-4 text-[11px] text-slate-400">
+                  دوربینی در شبکه محلی یافت نشد. توجه: این قابلیت تنها زمانی کار می‌کند که سرور روی شبکه داخلی شما اجرا شده باشد.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {discoveredDevices.map((dev, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-2.5 rounded bg-slate-900 border border-slate-800 hover:border-indigo-500/50 transition-colors">
+                      <div className="overflow-hidden">
+                        <div className="text-xs font-bold text-slate-200 truncate">{dev.name || 'IP Camera'}</div>
+                        <div className="text-[10px] text-slate-400 font-mono mt-0.5 flex items-center gap-1">
+                          <Wifi className="w-3 h-3 text-emerald-400" />
+                          {dev.ipAddress || dev.xaddrs[0]}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleSelectDiscovered(dev)}
+                        className="px-2 py-1 rounded bg-indigo-500/20 hover:bg-indigo-500/40 text-indigo-300 text-[10px] font-bold whitespace-nowrap"
+                      >
+                        افزودن
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Add Form */}
           {showAddForm && (
@@ -170,6 +267,7 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
                     <option value="simulation">شبیه‌ساز تصویر مداربسته (CCTV Test Feed)</option>
                     <option value="video_file">فایل ویدیویی محلی (ویدیو برای تست و دیباگ سیستم)</option>
                     <option value="webcam">دوربین زنده سیستم/وبکم (Live Webcam Input)</option>
+                    <option value="dahua">دوربین IP داهوا / DVR (شبکه محلی)</option>
                     <option value="mjpeg">استریم زنده شبکه IP (MJPEG/HTTP Stream)</option>
                     <option value="snapshot">دریافت تصاویر پی‌درپی اسنپ‌شات (JPEG Polling)</option>
                   </select>
@@ -186,6 +284,47 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
                   />
                 </div>
               </div>
+
+              {/* Dahua Config Section */}
+              {streamType === 'dahua' && (
+                <div className="grid grid-cols-3 gap-3 p-3 bg-indigo-950/20 border border-indigo-500/30 rounded-lg">
+                  <div>
+                    <label className="block text-xs text-slate-300 mb-1 font-mono">نام کاربری DVR:</label>
+                    <input
+                      type="text"
+                      value={dahuaUsername}
+                      onChange={(e) => setDahuaUsername(e.target.value)}
+                      placeholder="admin"
+                      className="w-full px-3 py-1.5 rounded-md bg-slate-900 border border-slate-700 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-300 mb-1 font-mono">رمز عبور DVR:</label>
+                    <input
+                      type="password"
+                      value={dahuaPassword}
+                      onChange={(e) => setDahuaPassword(e.target.value)}
+                      className="w-full px-3 py-1.5 rounded-md bg-slate-900 border border-slate-700 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-300 mb-1 font-mono">شماره کانال:</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={64}
+                      value={dahuaChannel}
+                      onChange={(e) => setDahuaChannel(parseInt(e.target.value) || 1)}
+                      className="w-full px-3 py-1.5 rounded-md bg-slate-900 border border-slate-700 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                  <div className="col-span-3">
+                    <p className="text-[10px] text-slate-400">
+                      سامانه با استفاده از ارتباط Digest به دوربین داهوا یا دستگاه DVR/NVR شما در آدرس IP وارد شده متصل می‌شود. تصویر به صورت زنده فراخوانی و پردازش می‌گردد.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Local Video File Picker Section if video_file selected */}
               {streamType === 'video_file' ? (
@@ -226,7 +365,7 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
                     </p>
                   )}
                 </div>
-              ) : (
+              ) : streamType !== 'dahua' ? (
                 <div>
                   <label className="block text-xs text-slate-300 mb-1 font-mono">
                     آدرس URL استریم / اسنپ‌شات (FEED URL):
@@ -239,7 +378,7 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
                     className="w-full px-3 py-1.5 rounded-md bg-slate-900 border border-slate-700 text-xs text-white font-mono focus:outline-none focus:border-cyan-500"
                   />
                 </div>
-              )}
+              ) : null}
 
               <div className="flex justify-end gap-2 pt-2">
                 <button

@@ -4,6 +4,9 @@ import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
+import { Readable } from 'stream';
+import DigestFetch from 'digest-fetch';
+import onvif from 'node-onvif';
 
 dotenv.config();
 
@@ -466,9 +469,48 @@ app.delete('/api/registered-faces/:id', (req: Request, res: Response) => {
   res.json({ success: true, persons: db.registeredPersons });
 });
 
-// IP Camera Proxy: Fetch image/snapshot from any IP camera address without CORS/Mixed-Content block
+// ONVIF Camera Discovery (Works when server is run locally on the same LAN)
+app.get('/api/camera/discover', async (req: Request, res: Response) => {
+  try {
+    console.log('Starting ONVIF network probe...');
+    const devices = await onvif.startProbe();
+    const discovered = devices.map((device: any) => {
+      // Extract IP from xaddr (e.g., http://192.168.1.55:80/onvif/device_service)
+      const xaddr = device.xaddrs[0] || '';
+      let ip = '';
+      if (xaddr) {
+        try {
+          const url = new URL(xaddr);
+          ip = url.hostname;
+        } catch (e) {
+          // fallback regex
+          const match = xaddr.match(/https?:\/\/([^\/:]+)/);
+          if (match) ip = match[1];
+        }
+      }
+      return {
+        urn: device.urn,
+        name: device.name || 'دوربین شبکه (ONVIF)',
+        hardware: device.hardware || 'IP Camera',
+        location: device.location || 'Local Network',
+        xaddrs: device.xaddrs,
+        ipAddress: ip,
+      };
+    });
+    console.log(`Discovered ${discovered.length} devices.`);
+    res.json({ success: true, devices: discovered });
+  } catch (error: any) {
+    console.error('ONVIF Discovery Error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// IP Camera Proxy: Fetch image/snapshot/mjpeg from any IP camera address without CORS/Mixed-Content block
 app.get('/api/camera/proxy', async (req: Request, res: Response) => {
   const targetUrl = req.query.url;
+  const username = req.query.username as string;
+  const password = req.query.password as string;
+  
   if (!targetUrl || typeof targetUrl !== 'string') {
     res.status(400).json({ error: 'url parameter is required' });
     return;
@@ -476,15 +518,25 @@ app.get('/api/camera/proxy', async (req: Request, res: Response) => {
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    // Do not use a hard timeout if it's an MJPEG stream, but we should timeout if connection hangs.
+    // Dahua streams are continuous, so we only timeout the initial connection phase.
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-    const response = await fetch(targetUrl, {
-      signal: controller.signal,
+    const isDahua = username && password;
+    let fetchFn = fetch;
+    if (isDahua) {
+      const client = new DigestFetch(username, password, { basic: true });
+      fetchFn = client.fetch.bind(client);
+    }
+
+    const response = await fetchFn(targetUrl, {
+      signal: controller.signal as any,
       headers: {
         'User-Agent': 'CCTV-Surveillance-Proxy/1.0',
-        Accept: 'image/*,*/*',
+        Accept: 'image/*,video/*,*/*',
       },
     });
+    
     clearTimeout(timeoutId);
 
     if (!response.ok) {
@@ -492,15 +544,31 @@ app.get('/api/camera/proxy', async (req: Request, res: Response) => {
     }
 
     const contentType = response.headers.get('content-type') || 'image/jpeg';
-    const buffer = await response.arrayBuffer();
-
+    
     res.set({
       'Content-Type': contentType,
       'Cache-Control': 'no-store, must-revalidate',
       Pragma: 'no-cache',
     });
-    res.send(Buffer.from(buffer));
+
+    // Handle continuous MJPEG streams vs single snapshots
+    if (contentType.includes('multipart/x-mixed-replace') || req.query.stream === 'true') {
+      if (response.body) {
+        // Node 18+ Web ReadableStream
+        Readable.fromWeb(response.body as any).pipe(res);
+        req.on('close', () => {
+          controller.abort();
+        });
+      } else {
+        res.end();
+      }
+    } else {
+      // Single image/snapshot - buffer it
+      const buffer = await response.arrayBuffer();
+      res.send(Buffer.from(buffer));
+    }
   } catch (err: any) {
+    console.error('Proxy Error:', err.message);
     // Return an informative SVG fallback image so UI doesn't show broken image
     const svgFallback = `
       <svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360" fill="#0f172a">
@@ -511,7 +579,7 @@ app.get('/api/camera/proxy', async (req: Request, res: Response) => {
           عدم ارتباط با دوربین IP (${targetUrl.slice(0, 35)}...)
         </text>
         <text x="320" y="245" fill="#94a3b8" font-size="13" font-family="sans-serif" text-anchor="middle">
-          لطفاً آدرس IP و پورت دوربین مداربسته را در تنظیمات بررسی نمایید
+          لطفاً آدرس IP و رمز عبور دوربین مداربسته را بررسی نمایید
         </text>
       </svg>
     `;

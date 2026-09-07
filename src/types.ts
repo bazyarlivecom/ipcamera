@@ -61,7 +61,7 @@ export interface CameraConfig {
   id: string;
   name: string;
   ipAddress: string;
-  streamType: 'mjpeg' | 'snapshot' | 'webcam' | 'simulation' | 'video_file';
+  streamType: 'mjpeg' | 'snapshot' | 'webcam' | 'simulation' | 'video_file' | 'dahua';
   streamUrl: string;
   location: string;
   isActive: boolean;
@@ -69,6 +69,9 @@ export interface CameraConfig {
   fps?: number;
   videoFileName?: string;
   videoFileSize?: string;
+  dahuaUsername?: string;
+  dahuaPassword?: string;
+  dahuaChannel?: number;
 }
 
 export interface SystemStats {
