@@ -225,8 +225,13 @@ export default function App() {
         body: JSON.stringify(cam),
       });
       const data = await res.json();
-      if (data.success) {
+      if (data.success && data.cameras) {
         setCameras(data.cameras);
+        // Switch to the newly created camera immediately
+        if (data.cameras.length > 0) {
+          const newCam = data.cameras[data.cameras.length - 1];
+          setActiveCamera(newCam);
+        }
       }
     } catch (err) {
       console.error('Failed to add camera:', err);

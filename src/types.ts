@@ -72,6 +72,9 @@ export interface CameraConfig {
   dahuaUsername?: string;
   dahuaPassword?: string;
   dahuaChannel?: number;
+  dahuaPort?: number;
+  dahuaMode?: 'auto' | 'snapshot' | 'mjpeg';
+  deviceType?: 'dvr' | 'camera';
 }
 
 export interface SystemStats {

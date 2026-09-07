@@ -376,6 +376,140 @@ app.get('/api/cameras', (_req: Request, res: Response) => {
   res.json({ success: true, cameras: db.cameras });
 });
 
+// Digest & Basic Authentication helper for Dahua DVRs and IP Cameras
+import crypto from 'crypto';
+
+function md5(str: string): string {
+  return crypto.createHash('md5').update(str).digest('hex');
+}
+
+function parseDigestHeader(header: string): Record<string, string> {
+  const params: Record<string, string> = {};
+  const matches = header.matchAll(/([a-zA-Z0-9_-]+)=(?:"([^"]*)"|([^,\s]*))/g);
+  for (const match of matches) {
+    params[match[1].toLowerCase()] = match[2] !== undefined ? match[2] : match[3];
+  }
+  return params;
+}
+
+async function fetchWithDahuaAuth(
+  targetUrl: string,
+  username?: string,
+  password?: string,
+  signal?: AbortSignal
+): Promise<globalThis.Response> {
+  const defaultHeaders: Record<string, string> = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) CCTV-Surveillance-Client',
+    Accept: 'image/jpeg,image/png,image/*,video/*,*/*',
+    Connection: 'keep-alive',
+  };
+
+  // First request: unauthenticated or basic
+  let resp = await fetch(targetUrl, {
+    signal,
+    headers: defaultHeaders,
+  });
+
+  // If 401 Unauthorized received and credentials provided, perform Digest authentication
+  if (resp.status === 401 && username && password) {
+    const authHeader = resp.headers.get('www-authenticate') || '';
+
+    if (authHeader.toLowerCase().includes('digest')) {
+      const parsed = parseDigestHeader(authHeader);
+      const realm = parsed.realm || 'Login to DAHUA';
+      const nonce = parsed.nonce || '';
+      const qop = parsed.qop || '';
+      const opaque = parsed.opaque || '';
+      const algorithm = (parsed.algorithm || 'MD5').toUpperCase();
+
+      const parsedUrl = new URL(targetUrl);
+      const uri = parsedUrl.pathname + parsedUrl.search;
+      const cnonce = crypto.randomBytes(8).toString('hex');
+      const nc = '00000001';
+
+      const ha1 = md5(`${username}:${realm}:${password}`);
+      const ha2 = md5(`GET:${uri}`);
+      let response = '';
+      if (qop && qop.includes('auth')) {
+        response = md5(`${ha1}:${nonce}:${nc}:${cnonce}:auth:${ha2}`);
+      } else {
+        response = md5(`${ha1}:${nonce}:${ha2}`);
+      }
+
+      const digestParts = [
+        `username="${username}"`,
+        `realm="${realm}"`,
+        `nonce="${nonce}"`,
+        `uri="${uri}"`,
+        `response="${response}"`,
+      ];
+      if (algorithm) digestParts.push(`algorithm=${algorithm}`);
+      if (qop && qop.includes('auth')) {
+        digestParts.push(`qop=auth`);
+        digestParts.push(`nc=${nc}`);
+        digestParts.push(`cnonce="${cnonce}"`);
+      }
+      if (opaque) digestParts.push(`opaque="${opaque}"`);
+
+      resp = await fetch(targetUrl, {
+        signal,
+        headers: {
+          ...defaultHeaders,
+          Authorization: `Digest ${digestParts.join(', ')}`,
+        },
+      });
+
+      // Second attempt: some Dahua DVR firmware calculates Digest uri WITHOUT query parameters
+      if (resp.status === 401 && parsedUrl.search) {
+        const baseUri = parsedUrl.pathname;
+        const ha2Base = md5(`GET:${baseUri}`);
+        let responseBase = '';
+        if (qop && qop.includes('auth')) {
+          responseBase = md5(`${ha1}:${nonce}:${nc}:${cnonce}:auth:${ha2Base}`);
+        } else {
+          responseBase = md5(`${ha1}:${nonce}:${ha2Base}`);
+        }
+        const digestPartsBase = [
+          `username="${username}"`,
+          `realm="${realm}"`,
+          `nonce="${nonce}"`,
+          `uri="${baseUri}"`,
+          `response="${responseBase}"`,
+        ];
+        if (algorithm) digestPartsBase.push(`algorithm=${algorithm}`);
+        if (qop && qop.includes('auth')) {
+          digestPartsBase.push(`qop=auth`);
+          digestPartsBase.push(`nc=${nc}`);
+          digestPartsBase.push(`cnonce="${cnonce}"`);
+        }
+        if (opaque) digestPartsBase.push(`opaque="${opaque}"`);
+
+        resp = await fetch(targetUrl, {
+          signal,
+          headers: {
+            ...defaultHeaders,
+            Authorization: `Digest ${digestPartsBase.join(', ')}`,
+          },
+        });
+      }
+    }
+
+    // Third attempt: Fallback to Basic Auth (supported by older DVRs or Hikvision)
+    if (resp.status === 401) {
+      const basicToken = Buffer.from(`${username}:${password}`).toString('base64');
+      resp = await fetch(targetUrl, {
+        signal,
+        headers: {
+          ...defaultHeaders,
+          Authorization: `Basic ${basicToken}`,
+        },
+      });
+    }
+  }
+
+  return resp;
+}
+
 // POST add or update camera
 app.post('/api/cameras', (req: Request, res: Response) => {
   const db = readDb();
@@ -406,6 +540,14 @@ app.post('/api/cameras', (req: Request, res: Response) => {
       isActive: body.isActive ?? true,
       resolution: body.resolution || '1920x1080',
       fps: body.fps || 25,
+      videoFileName: body.videoFileName,
+      videoFileSize: body.videoFileSize,
+      dahuaUsername: body.dahuaUsername,
+      dahuaPassword: body.dahuaPassword,
+      dahuaChannel: body.dahuaChannel !== undefined ? Number(body.dahuaChannel) : 1,
+      dahuaPort: body.dahuaPort !== undefined ? Number(body.dahuaPort) : 80,
+      dahuaMode: body.dahuaMode || 'auto',
+      deviceType: body.deviceType || 'camera',
     };
     db.cameras.push(newCamera);
   }
@@ -505,6 +647,60 @@ app.get('/api/camera/discover', async (req: Request, res: Response) => {
   }
 });
 
+// Test connection endpoint for camera/DVR verification in modal
+app.get('/api/camera/test-connection', async (req: Request, res: Response) => {
+  const targetUrl = req.query.url as string;
+  const username = req.query.username as string;
+  const password = req.query.password as string;
+
+  if (!targetUrl || typeof targetUrl !== 'string') {
+    res.status(400).json({ success: false, message: 'آدرس URL الزامی است' });
+    return;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+    const response = await fetchWithDahuaAuth(targetUrl, username, password, controller.signal);
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        res.json({
+          success: false,
+          status: 401,
+          message: 'خطای احراز هویت (401 Unauthorized): نام کاربری یا رمز عبور اشتباه است.',
+        });
+        return;
+      }
+      res.json({
+        success: false,
+        status: response.status,
+        message: `پاسخ از دوربین با کد خطای ${response.status} (${response.statusText}) همراه بود.`,
+      });
+      return;
+    }
+
+    const contentType = response.headers.get('content-type') || 'image/jpeg';
+    const buffer = await response.arrayBuffer();
+    const base64 = Buffer.from(buffer).toString('base64');
+    const previewDataUrl = `data:${contentType};base64,${base64}`;
+
+    res.json({
+      success: true,
+      message: 'اتصال با موفقیت برقرار شد و تصویر زنده دریافت گردید.',
+      contentType,
+      preview: previewDataUrl,
+    });
+  } catch (err: any) {
+    res.json({
+      success: false,
+      message: `خطای برقراری ارتباط با دستگاه: ${err.message}`,
+    });
+  }
+});
+
 // IP Camera Proxy: Fetch image/snapshot/mjpeg from any IP camera address without CORS/Mixed-Content block
 app.get('/api/camera/proxy', async (req: Request, res: Response) => {
   const targetUrl = req.query.url;
@@ -518,39 +714,10 @@ app.get('/api/camera/proxy', async (req: Request, res: Response) => {
 
   try {
     const controller = new AbortController();
-    // Do not use a hard timeout if it's an MJPEG stream, but we should timeout if connection hangs.
-    // Dahua streams are continuous, so we only timeout the initial connection phase.
+    // 10s connection timeout
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-    const isDahua = username && password;
-    let fetchFn = (url: any, opts: any) => fetch(url, opts);
-    
-    if (isDahua) {
-      // Create a client without forcing basic auth, so it handles Digest challenge.
-      const client = new DigestFetch(username, password);
-      fetchFn = client.fetch.bind(client);
-    }
-
-    let response = await fetchFn(targetUrl, {
-      signal: controller.signal as any,
-      headers: {
-        'User-Agent': 'CCTV-Surveillance-Proxy/1.0',
-        Accept: 'image/*,video/*,*/*',
-      },
-    });
-
-    // If it still fails with 401, try forcing Basic Auth as a fallback for older cameras
-    if (response.status === 401 && isDahua) {
-      const basicClient = new DigestFetch(username, password, { basic: true });
-      response = await basicClient.fetch(targetUrl, {
-        signal: controller.signal as any,
-        headers: {
-          'User-Agent': 'CCTV-Surveillance-Proxy/1.0',
-          Accept: 'image/*,video/*,*/*',
-        },
-      });
-    }
-    
+    const response = await fetchWithDahuaAuth(targetUrl, username, password, controller.signal);
     clearTimeout(timeoutId);
 
     if (!response.ok) {
@@ -568,7 +735,6 @@ app.get('/api/camera/proxy', async (req: Request, res: Response) => {
     // Handle continuous MJPEG streams vs single snapshots
     if (contentType.includes('multipart/x-mixed-replace') || req.query.stream === 'true') {
       if (response.body) {
-        // Node 18+ Web ReadableStream
         Readable.fromWeb(response.body as any).pipe(res);
         req.on('close', () => {
           controller.abort();
@@ -601,7 +767,7 @@ app.get('/api/camera/proxy', async (req: Request, res: Response) => {
       'Content-Type': 'image/svg+xml',
       'Cache-Control': 'no-store',
     });
-    res.send(svgFallback);
+    res.status(502).send(svgFallback);
   }
 });
 

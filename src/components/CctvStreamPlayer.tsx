@@ -83,6 +83,10 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(true);
+  const isPlayingRef = useRef(isPlaying);
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [detectedFaces, setDetectedFaces] = useState<DetectedFace[]>([]);
   const [showHudOverlay, setShowHudOverlay] = useState(true);
@@ -210,6 +214,8 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
   useEffect(() => {
     let activeStream: MediaStream | null = null;
     let isCancelled = false;
+    let snapshotTimer: any = null;
+    let isLoopActive = true;
 
     setStreamError(null);
 
@@ -231,26 +237,92 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
             setIsPlaying(true);
           }
         } else if (['dahua', 'mjpeg', 'snapshot'].includes(activeCamera.streamType)) {
-          if (imgRef.current) {
-            let targetUrl = activeCamera.streamUrl;
-            let username = '';
-            let password = '';
-            
-            if (activeCamera.streamType === 'dahua') {
-              const ip = activeCamera.ipAddress || '192.168.1.55';
-              const channel = activeCamera.dahuaChannel || 1;
-              targetUrl = `http://${ip}/cgi-bin/mjpg/video.cgi?channel=${channel}&subtype=1`;
-              username = activeCamera.dahuaUsername || 'admin';
-              password = activeCamera.dahuaPassword || '';
-            }
+          let cleanIp = (activeCamera.ipAddress || '192.168.1.108')
+            .trim()
+            .replace(/^https?:\/\//i, '')
+            .replace(/\/.*$/, '');
+          const port = activeCamera.dahuaPort || 80;
+          const hostWithPort = cleanIp.includes(':') ? cleanIp : `${cleanIp}${port !== 80 ? `:${port}` : ''}`;
+          const channel = activeCamera.dahuaChannel || 1;
+          const username = activeCamera.dahuaUsername || 'admin';
+          const password = activeCamera.dahuaPassword || '';
+          const mode = activeCamera.dahuaMode || 'snapshot';
 
-            const proxyUrl = `/api/camera/proxy?url=${encodeURIComponent(targetUrl)}&stream=true${
+          const snapshotTarget =
+            activeCamera.streamType === 'dahua'
+              ? `http://${hostWithPort}/cgi-bin/snapshot.cgi?channel=${channel}`
+              : activeCamera.streamUrl || `http://${hostWithPort}/cgi-bin/snapshot.cgi?channel=${channel}`;
+
+          const startSnapshotLoop = () => {
+            let isFetching = false;
+            let failureCount = 0;
+
+            const fetchNextSnapshot = () => {
+              if (isCancelled || !isLoopActive) return;
+              if (!isPlayingRef.current) {
+                snapshotTimer = setTimeout(fetchNextSnapshot, 300);
+                return;
+              }
+              if (isFetching) return;
+              isFetching = true;
+
+              const preloader = new Image();
+              preloader.crossOrigin = 'anonymous';
+
+              preloader.onload = () => {
+                isFetching = false;
+                failureCount = 0;
+                if (isCancelled || !isLoopActive) return;
+
+                if (imgRef.current) {
+                  imgRef.current.src = preloader.src;
+                  setIsPlaying(true);
+                  setStreamError(null);
+                }
+                // Schedule next snapshot frame (~120ms gives smooth ~8 FPS playback)
+                snapshotTimer = setTimeout(fetchNextSnapshot, 120);
+              };
+
+              preloader.onerror = () => {
+                isFetching = false;
+                failureCount++;
+                if (isCancelled || !isLoopActive) return;
+
+                if (failureCount >= 4) {
+                  setStreamError(
+                    `عدم دریافت فید تصویر از ${cleanIp} (کانال ${channel}). لطفاً مطمئن شوید دستگاه DVR یا دوربین متصل بوده و نام کاربری (${username}) و رمز عبور وارد شده صحیح باشند.`
+                  );
+                }
+                snapshotTimer = setTimeout(fetchNextSnapshot, 1500);
+              };
+
+              const authParams = `${username ? `&username=${encodeURIComponent(username)}` : ''}${
+                password ? `&password=${encodeURIComponent(password)}` : ''
+              }`;
+              preloader.src = `/api/camera/proxy?url=${encodeURIComponent(snapshotTarget)}${authParams}&_t=${Date.now()}`;
+            };
+
+            fetchNextSnapshot();
+          };
+
+          if (mode === 'mjpeg') {
+            const mjpegTarget = `http://${hostWithPort}/cgi-bin/mjpg/video.cgi?channel=${channel}&subtype=1`;
+            const proxyUrl = `/api/camera/proxy?url=${encodeURIComponent(mjpegTarget)}&stream=true${
               username ? `&username=${encodeURIComponent(username)}` : ''
             }${password ? `&password=${encodeURIComponent(password)}` : ''}`;
 
-            imgRef.current.crossOrigin = 'anonymous';
-            imgRef.current.src = proxyUrl;
-            setIsPlaying(true);
+            if (imgRef.current) {
+              imgRef.current.crossOrigin = 'anonymous';
+              imgRef.current.src = proxyUrl;
+              setIsPlaying(true);
+              imgRef.current.onerror = () => {
+                console.warn('MJPEG stream failed; falling back to continuous snapshot polling...');
+                startSnapshotLoop();
+              };
+            }
+          } else {
+            // Snapshot polling mode (100% compatible with all Dahua DVRs, XVRs, and cameras)
+            startSnapshotLoop();
           }
         } else {
           // Video file or Simulation
@@ -282,6 +354,8 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
 
     return () => {
       isCancelled = true;
+      isLoopActive = false;
+      if (snapshotTimer) clearTimeout(snapshotTimer);
       if (activeStream) {
         activeStream.getTracks().forEach((t) => t.stop());
       }
@@ -585,13 +659,14 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
 
   // Toggle play/pause
   const handleTogglePlay = () => {
-    if (!videoRef.current) return;
+    const media = videoRef.current || imgRef.current;
+    if (!media) return;
     if (isPlaying) {
-      videoRef.current.pause();
+      if (videoRef.current) videoRef.current.pause();
       setIsPlaying(false);
-      runDetection(videoRef.current);
+      runDetection(media);
     } else {
-      videoRef.current.play().catch(() => {});
+      if (videoRef.current) videoRef.current.play().catch(() => {});
       setIsPlaying(true);
     }
   };
@@ -608,8 +683,8 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
   // Click on canvas to zoom into face or inspect
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasOverlayRef.current;
-    const video = videoRef.current;
-    if (!canvas || !video) return;
+    const media = videoRef.current || imgRef.current;
+    if (!canvas || !media) return;
 
     const rect = canvas.getBoundingClientRect();
     const clickX = (e.clientX - rect.left) / rect.width;
@@ -625,7 +700,7 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
     );
 
     if (clickedFace) {
-      const thumb = cropFaceToDataUrl(video, clickedFace.box, 300);
+      const thumb = cropFaceToDataUrl(media, clickedFace.box, 300);
       onSelectFaceToInspect(clickedFace, thumb);
       playBeep();
     }
@@ -633,11 +708,11 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
 
   // Manual capture
   const handleManualCapture = () => {
-    const video = videoRef.current;
-    if (!video || detectedFaces.length === 0) return;
+    const media = videoRef.current || imgRef.current;
+    if (!media || detectedFaces.length === 0) return;
 
     const primaryFace = detectedFaces[0];
-    const thumb = cropFaceToDataUrl(video, primaryFace.box, 300);
+    const thumb = cropFaceToDataUrl(media, primaryFace.box, 300);
     onAutoLogTraffic(primaryFace, thumb);
     playBeep();
   };

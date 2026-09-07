@@ -13,6 +13,12 @@ import {
   Film,
   Upload,
   Search,
+  Eye,
+  EyeOff,
+  Activity,
+  HardDrive,
+  AlertCircle,
+  CheckCircle2,
 } from 'lucide-react';
 import { CameraConfig } from '../types';
 
@@ -36,7 +42,7 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
   const [showAddForm, setShowAddForm] = useState(false);
   const [name, setName] = useState('');
   const [ipAddress, setIpAddress] = useState('192.168.1.');
-  const [streamType, setStreamType] = useState<CameraConfig['streamType']>('simulation');
+  const [streamType, setStreamType] = useState<CameraConfig['streamType']>('dahua');
   const [streamUrl, setStreamUrl] = useState('');
   const [location, setLocation] = useState('');
   const [videoFileName, setVideoFileName] = useState('');
@@ -44,6 +50,17 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
   const [dahuaUsername, setDahuaUsername] = useState('admin');
   const [dahuaPassword, setDahuaPassword] = useState('');
   const [dahuaChannel, setDahuaChannel] = useState(1);
+  const [dahuaPort, setDahuaPort] = useState(80);
+  const [deviceType, setDeviceType] = useState<'dvr' | 'camera'>('dvr');
+  const [dahuaMode, setDahuaMode] = useState<'auto' | 'snapshot' | 'mjpeg'>('snapshot');
+  const [showPassword, setShowPassword] = useState(false);
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    message: string;
+    preview?: string;
+  } | null>(null);
+
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoveredDevices, setDiscoveredDevices] = useState<any[]>([]);
   const [showDiscovery, setShowDiscovery] = useState(false);
@@ -68,10 +85,10 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
 
   const handleSelectDiscovered = (device: any) => {
     setShowAddForm(true);
-    setName(device.name || 'دوربین شبکه');
+    setName(device.name || 'دوربین شبکه (کشف شده)');
     setIpAddress(device.ipAddress || '');
-    setStreamType('dahua'); // Default to dahua or mjpeg
-    setLocation(device.location || '');
+    setStreamType('dahua');
+    setLocation(device.location || 'شبکه محلی');
     setShowDiscovery(false);
   };
 
@@ -87,20 +104,54 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
     setStreamType('video_file');
   };
 
+  const handleTestConnection = async () => {
+    let cleanIp = ipAddress.trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
+    if (!cleanIp || cleanIp === '192.168.1.') {
+      alert('لطفاً ابتدا آدرس IP معتبر دوربین یا دستگاه DVR را وارد نمایید.');
+      return;
+    }
+    const hostWithPort = cleanIp.includes(':') ? cleanIp : `${cleanIp}${dahuaPort !== 80 ? `:${dahuaPort}` : ''}`;
+    const channelNum = deviceType === 'camera' ? 1 : dahuaChannel;
+    const testUrl = `http://${hostWithPort}/cgi-bin/snapshot.cgi?channel=${channelNum}`;
+
+    setIsTestingConnection(true);
+    setTestResult(null);
+
+    try {
+      const queryParams = new URLSearchParams({
+        url: testUrl,
+        username: dahuaUsername,
+        password: dahuaPassword,
+      });
+      const res = await fetch(`/api/camera/test-connection?${queryParams.toString()}`);
+      const data = await res.json();
+      setTestResult(data);
+    } catch (err: any) {
+      setTestResult({
+        success: false,
+        message: 'خطا در برقراری ارتباط با سرور یا شبکه: ' + (err.message || 'نامشخص'),
+      });
+    } finally {
+      setIsTestingConnection(false);
+    }
+  };
+
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !ipAddress.trim()) return;
 
+    let cleanIp = ipAddress.trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
+
     onAddCamera({
       name,
-      ipAddress,
+      ipAddress: cleanIp,
       streamType,
       streamUrl:
         streamUrl ||
         (streamType === 'webcam'
           ? 'webcam'
           : 'https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&w=1080&q=80'),
-      location: location || 'محوطه داخلی',
+      location: location || 'محوطه نظارتی',
       isActive: true,
       resolution: '1920x1080',
       fps: 25,
@@ -108,7 +159,10 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
       videoFileSize: videoFileSize || undefined,
       dahuaUsername: streamType === 'dahua' ? dahuaUsername : undefined,
       dahuaPassword: streamType === 'dahua' ? dahuaPassword : undefined,
-      dahuaChannel: streamType === 'dahua' ? dahuaChannel : undefined,
+      dahuaChannel: streamType === 'dahua' ? (deviceType === 'camera' ? 1 : dahuaChannel) : undefined,
+      dahuaPort: streamType === 'dahua' ? dahuaPort : undefined,
+      dahuaMode: streamType === 'dahua' ? dahuaMode : undefined,
+      deviceType: streamType === 'dahua' ? deviceType : undefined,
     });
 
     setName('');
@@ -120,6 +174,7 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
     setDahuaUsername('admin');
     setDahuaPassword('');
     setDahuaChannel(1);
+    setTestResult(null);
     setShowAddForm(false);
   };
 
@@ -285,42 +340,186 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
                 </div>
               </div>
 
-              {/* Dahua Config Section */}
+              {/* Dahua / DVR Config Section */}
               {streamType === 'dahua' && (
-                <div className="grid grid-cols-3 gap-3 p-3 bg-indigo-950/20 border border-indigo-500/30 rounded-lg">
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1 font-mono">نام کاربری DVR:</label>
-                    <input
-                      type="text"
-                      value={dahuaUsername}
-                      onChange={(e) => setDahuaUsername(e.target.value)}
-                      placeholder="admin"
-                      className="w-full px-3 py-1.5 rounded-md bg-slate-900 border border-slate-700 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
-                    />
+                <div className="p-3.5 bg-indigo-950/30 border border-indigo-500/40 rounded-lg space-y-3">
+                  <div className="flex items-center justify-between pb-2 border-b border-indigo-900/50">
+                    <span className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
+                      <HardDrive className="w-4 h-4 text-indigo-400" />
+                      تنظیمات اتصال به دستگاه DVR یا دوربین داهوا
+                    </span>
+                    <span className="text-[11px] text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded font-mono">
+                      پروتکل ایمن Digest + CGI
+                    </span>
                   </div>
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1 font-mono">رمز عبور DVR:</label>
-                    <input
-                      type="password"
-                      value={dahuaPassword}
-                      onChange={(e) => setDahuaPassword(e.target.value)}
-                      className="w-full px-3 py-1.5 rounded-md bg-slate-900 border border-slate-700 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
-                    />
+
+                  {/* Device Type Selector */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDeviceType('dvr')}
+                      className={`px-3 py-2 rounded-md text-xs font-medium border flex items-center justify-center gap-2 transition-all ${
+                        deviceType === 'dvr'
+                          ? 'bg-indigo-600/30 border-indigo-500 text-white font-bold'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'
+                      }`}
+                    >
+                      <HardDrive className="w-3.5 h-3.5" />
+                      دستگاه ضبط DVR / XVR / NVR
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeviceType('camera');
+                        setDahuaChannel(1);
+                      }}
+                      className={`px-3 py-2 rounded-md text-xs font-medium border flex items-center justify-center gap-2 transition-all ${
+                        deviceType === 'camera'
+                          ? 'bg-indigo-600/30 border-indigo-500 text-white font-bold'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'
+                      }`}
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      دوربین مداربسته مستقل (IP Camera)
+                    </button>
                   </div>
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1 font-mono">شماره کانال:</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={64}
-                      value={dahuaChannel}
-                      onChange={(e) => setDahuaChannel(parseInt(e.target.value) || 1)}
-                      className="w-full px-3 py-1.5 rounded-md bg-slate-900 border border-slate-700 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
-                    />
+
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                    <div>
+                      <label className="block text-xs text-slate-300 mb-1 font-mono">نام کاربری:</label>
+                      <input
+                        type="text"
+                        value={dahuaUsername}
+                        onChange={(e) => setDahuaUsername(e.target.value)}
+                        placeholder="admin"
+                        className="w-full px-3 py-1.5 rounded-md bg-slate-900 border border-slate-700 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+
+                    <div className="relative">
+                      <label className="block text-xs text-slate-300 mb-1 font-mono">رمز عبور دستگاه:</label>
+                      <div className="relative">
+                        <input
+                          type={showPassword ? 'text' : 'password'}
+                          value={dahuaPassword}
+                          onChange={(e) => setDahuaPassword(e.target.value)}
+                          placeholder="رمز عبور داهوا"
+                          className="w-full pl-8 pr-3 py-1.5 rounded-md bg-slate-900 border border-slate-700 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                          title={showPassword ? 'مخفی کردن رمز' : 'نمایش رمز'}
+                        >
+                          {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs text-slate-300 mb-1 font-mono">پورت وب (HTTP):</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={65535}
+                        value={dahuaPort}
+                        onChange={(e) => setDahuaPort(parseInt(e.target.value) || 80)}
+                        placeholder="80"
+                        className="w-full px-3 py-1.5 rounded-md bg-slate-900 border border-slate-700 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs text-slate-300 mb-1 font-mono">
+                        {deviceType === 'dvr' ? 'شماره کانال DVR:' : 'کانال دوربین:'}
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={64}
+                        disabled={deviceType === 'camera'}
+                        value={deviceType === 'camera' ? 1 : dahuaChannel}
+                        onChange={(e) => setDahuaChannel(parseInt(e.target.value) || 1)}
+                        className={`w-full px-3 py-1.5 rounded-md border text-xs text-white font-mono focus:outline-none focus:border-indigo-500 ${
+                          deviceType === 'camera'
+                            ? 'bg-slate-950 border-slate-800 text-slate-500 cursor-not-allowed'
+                            : 'bg-slate-900 border-slate-700'
+                        }`}
+                      />
+                    </div>
                   </div>
-                  <div className="col-span-3">
-                    <p className="text-[10px] text-slate-400">
-                      سامانه با استفاده از ارتباط Digest به دوربین داهوا یا دستگاه DVR/NVR شما در آدرس IP وارد شده متصل می‌شود. تصویر به صورت زنده فراخوانی و پردازش می‌گردد.
+
+                  {/* Mode & Compatibility */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label className="block text-xs text-slate-300 mb-1 font-mono">روش دریافت تصویر:</label>
+                      <select
+                        value={dahuaMode}
+                        onChange={(e) => setDahuaMode(e.target.value as any)}
+                        className="w-full px-3 py-1.5 rounded-md bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+                      >
+                        <option value="snapshot">
+                          اسنپ‌شات زنده پیوسته (سازگار با ۱۰۰٪ DVRها و دوربین‌های H.264/H.265)
+                        </option>
+                        <option value="mjpeg">استریم زنده تصویری (MJPEG Video Stream)</option>
+                        <option value="auto">حالت هوشمند خودکار (تلاش برای MJPEG و سوئیچ به اسنپ‌شات)</option>
+                      </select>
+                    </div>
+
+                    <div className="flex items-end">
+                      <button
+                        type="button"
+                        onClick={handleTestConnection}
+                        disabled={isTestingConnection}
+                        className="w-full py-2 px-3 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors"
+                      >
+                        <Activity className={`w-3.5 h-3.5 ${isTestingConnection ? 'animate-spin' : ''}`} />
+                        <span>{isTestingConnection ? 'در حال برقراری ارتباط با دستگاه...' : 'بررسی و تست زنده اتصال به دستگاه'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Test Connection Result Feedback */}
+                  {testResult && (
+                    <div
+                      className={`p-3 rounded-md border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs animate-in fade-in ${
+                        testResult.success
+                          ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-300'
+                          : 'bg-rose-950/40 border-rose-500/50 text-rose-300'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2">
+                        {testResult.success ? (
+                          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                        ) : (
+                          <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                        )}
+                        <div>
+                          <p className="font-bold">{testResult.message}</p>
+                          {!testResult.success && (
+                            <p className="text-[11px] text-slate-400 mt-1">
+                              نکته: مطمئن شوید دستگاه DVR یا دوربین شما به همین شبکه متصل بوده و آدرس IP و پورت وب (۸۰ یا ۸۰۸۰) به همراه رمز عبور به درستی وارد شده باشند.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {testResult.success && testResult.preview && (
+                        <div className="shrink-0 border border-emerald-500/40 rounded overflow-hidden shadow-md">
+                          <img
+                            src={testResult.preview}
+                            alt="Camera Preview"
+                            className="w-24 h-14 object-cover"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="p-2 rounded bg-indigo-950/40 border border-indigo-900/40">
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      💡 <strong>راهنما:</strong> برای دستگاه‌های <strong>DVR یا NVR</strong>، می‌توانید تصاویر هر کدام از دوربین‌های متصل به دستگاه را با تغییر «شماره کانال» مشاهده نمایید. برای <strong>دوربین‌های تکی (Standalone)</strong>، شماره کانال برابر ۱ خواهد بود. حالت اسنپ‌شات زنده بدون نیاز به فعال‌سازی MJPEG روی دستگاه، فریم‌های زنده و پرسرعت را نمایش می‌دهد.
                     </p>
                   </div>
                 </div>
@@ -449,7 +648,9 @@ export const CameraManagerModal: React.FC<CameraManagerModalProps> = ({
                             ? 'WEBCAM'
                             : cam.streamType === 'simulation'
                             ? 'SIMULATION'
-                            : 'MJPEG'}
+                            : cam.streamType === 'dahua'
+                            ? `داهوا (${cam.deviceType === 'camera' ? 'دوربین مستقل' : `DVR کانال ${cam.dahuaChannel || 1}`})`
+                            : 'MJPEG/IP'}
                         </span>
                       </div>
                     </div>
