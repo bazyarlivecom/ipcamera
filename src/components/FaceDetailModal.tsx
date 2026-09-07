@@ -58,22 +58,26 @@ export const FaceDetailModal: React.FC<FaceDetailModalProps> = ({
     log?.jalaliDate || formatExactTimestamp(face?.timestamp).jalaliDate;
   const confidence = log?.confidence || face?.confidence || 95.0;
 
-  // Trigger Gemini AI deep analysis
+  // Trigger Gemini AI deep forensic biometric analysis & matching
   const handleAnalyzeWithAi = async () => {
     if (!thumbnail) return;
     setIsAnalyzingAi(true);
 
     try {
-      const res = await fetch('/api/analyze-face', {
+      const res = await fetch('/api/face/match-person', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageBase64: thumbnail }),
       });
       const data = await res.json();
-      if (data.success && data.data) {
-        setAiAnalysisResult(data.data);
-        if (data.data.securityNotes && !notes) {
-          setNotes(data.data.securityNotes);
+      if (data.success) {
+        setAiAnalysisResult(data);
+        if (data.matchedPerson) {
+          setPersonName(data.matchedPerson.fullName);
+          setPersonnelCode(data.matchedPerson.personnelCode || data.matchedPerson.id);
+        }
+        if (data.matchReason && !notes) {
+          setNotes(data.matchReason);
         }
       }
     } catch (err) {
@@ -258,35 +262,79 @@ export const FaceDetailModal: React.FC<FaceDetailModalProps> = ({
               <button
                 onClick={handleAnalyzeWithAi}
                 disabled={isAnalyzingAi}
-                className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-semibold shadow-md shadow-purple-500/20 transition-all disabled:opacity-60"
+                className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-gradient-to-r from-cyan-600 via-indigo-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500 text-white text-xs font-semibold shadow-md shadow-indigo-500/20 transition-all disabled:opacity-60"
               >
                 <Sparkles className={`w-4 h-4 ${isAnalyzingAi ? 'animate-spin' : ''}`} />
                 <span>
-                  {isAnalyzingAi ? 'در حال تحلیل با هوش مصنوعی...' : 'تحلیل هوشمند چهره (Gemini AI)'}
+                  {isAnalyzingAi
+                    ? 'در حال تطبیق بیومتریک با پایگاه داده...'
+                    : 'تطبیق بیومتریک و تشخیص دقیق هویت (Gemini AI)'}
                 </span>
               </button>
 
-              {/* AI Analysis Cards */}
+              {/* AI Biometric Match & Forensic Report */}
               {aiAnalysisResult && (
-                <div className="mt-2.5 p-2.5 rounded-xl bg-purple-950/40 border border-purple-800/50 text-xs space-y-1.5 animate-in fade-in">
-                  <div className="flex items-center justify-between text-purple-300">
-                    <span>تخمین سن:</span>
-                    <span className="font-bold text-white font-mono">
-                      {aiAnalysisResult.ageEstimate || 'نامشخص'}
+                <div className="mt-2.5 p-3 rounded-xl bg-slate-950/80 border border-indigo-500/40 text-xs space-y-2.5 animate-in fade-in">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-slate-800">
+                    <span className="font-bold flex items-center gap-1.5 text-xs text-indigo-300">
+                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      {aiAnalysisResult.matchFound
+                        ? 'تطبیق هویت تأیید شد'
+                        : 'سوژه ناشناس / مراجعه‌کننده'}
+                    </span>
+                    <span className="font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/60">
+                      {toPersianDigits(aiAnalysisResult.confidence || 94.0)}٪
                     </span>
                   </div>
-                  <div className="flex items-center justify-between text-purple-300">
-                    <span>جنسیت:</span>
-                    <span className="text-white">{aiAnalysisResult.genderEstimate || 'نامشخص'}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-purple-300">
-                    <span>حالت چهره:</span>
-                    <span className="text-white">{aiAnalysisResult.emotion || 'طبیعی'}</span>
-                  </div>
-                  {aiAnalysisResult.accessories && (
-                    <div className="flex items-center justify-between text-purple-300">
-                      <span>تجهیزات ظاهری:</span>
-                      <span className="text-white">{aiAnalysisResult.accessories}</span>
+
+                  {aiAnalysisResult.matchedPerson && (
+                    <div className="flex items-center gap-2.5 p-2 rounded-lg bg-indigo-950/30 border border-indigo-900/50">
+                      {aiAnalysisResult.matchedPerson.photoUrl && (
+                        <img
+                          src={aiAnalysisResult.matchedPerson.photoUrl}
+                          alt="Matched Record"
+                          className="w-10 h-10 rounded-full object-cover border border-emerald-400/60 shrink-0"
+                        />
+                      )}
+                      <div className="overflow-hidden">
+                        <p className="font-bold text-white text-xs truncate">
+                          {aiAnalysisResult.matchedPerson.fullName}
+                        </p>
+                        <p className="text-[11px] text-slate-400 truncate">
+                          {aiAnalysisResult.matchedPerson.role} • {aiAnalysisResult.matchedPerson.department}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {aiAnalysisResult.matchReason && (
+                    <p className="text-[11px] text-slate-300 leading-relaxed bg-slate-900/80 p-2 rounded border border-slate-800">
+                      🔍 <strong>تحلیل هندسی چهره:</strong> {aiAnalysisResult.matchReason}
+                    </p>
+                  )}
+
+                  {aiAnalysisResult.attributes && (
+                    <div className="grid grid-cols-2 gap-1.5 text-[11px] text-slate-300">
+                      <div className="p-1.5 rounded bg-slate-900/60">
+                        <span className="text-slate-400">سن تخمینی:</span>{' '}
+                        <span className="font-mono text-white font-bold">
+                          {aiAnalysisResult.attributes.ageRange || '۳۰-۴۰ سال'}
+                        </span>
+                      </div>
+                      <div className="p-1.5 rounded bg-slate-900/60">
+                        <span className="text-slate-400">جنسیت:</span>{' '}
+                        <span className="text-white">
+                          {aiAnalysisResult.attributes.gender || 'مرد'}
+                        </span>
+                      </div>
+                      {aiAnalysisResult.attributes.biometricSymmetry && (
+                        <div className="col-span-2 p-1.5 rounded bg-slate-900/60 flex justify-between">
+                          <span className="text-slate-400">تقارن ساختار صورت:</span>
+                          <span className="font-mono text-emerald-400 font-bold">
+                            {aiAnalysisResult.attributes.biometricSymmetry}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

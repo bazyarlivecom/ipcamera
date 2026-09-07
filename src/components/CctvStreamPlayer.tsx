@@ -102,6 +102,12 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [showPresetsMenu, setShowPresetsMenu] = useState(false);
 
+  // AI & Biometrics Settings
+  const [recognitionThreshold, setRecognitionThreshold] = useState<number>(70);
+  const [showLandmarks, setShowLandmarks] = useState(true);
+  const [enableJitterFilter, setEnableJitterFilter] = useState(true);
+  const [showAiSettings, setShowAiSettings] = useState(false);
+
   const isVideoMode =
     activeCamera.streamType === 'video_file' ||
     activeCamera.streamType === 'simulation';
@@ -132,7 +138,10 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
   const runDetection = useCallback(
     async (mediaSource: HTMLVideoElement | HTMLImageElement) => {
       try {
-        let faces = await detectFacesOnMedia(mediaSource, registeredPersons);
+        let faces = await detectFacesOnMedia(mediaSource, registeredPersons, {
+          recognitionThreshold,
+          enableSmoothing: enableJitterFilter,
+        });
 
         // If no face found in video, simulate smart demo tracking targets for testing if in simulation mode
         if (faces.length === 0 && activeCamera.streamType === 'simulation') {
@@ -564,6 +573,55 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
               ctx.textAlign = 'center';
               ctx.textBaseline = 'middle';
               ctx.fillText(labelText, bx + nameW / 2, by + bh + 3 + nameH / 2);
+
+              // 6. Real-time Biometric Facial Landmarks (Eyes, Nose, Mouth Geometry Mesh)
+              if (showLandmarks && face.landmarks) {
+                const lx = (pt: { x: number; y: number }) => pt.x * w;
+                const ly = (pt: { x: number; y: number }) => pt.y * h;
+
+                const leftEye = { x: lx(face.landmarks.leftEye), y: ly(face.landmarks.leftEye) };
+                const rightEye = { x: lx(face.landmarks.rightEye), y: ly(face.landmarks.rightEye) };
+                const nose = { x: lx(face.landmarks.noseTip), y: ly(face.landmarks.noseTip) };
+                const mouth = { x: lx(face.landmarks.mouthCenter), y: ly(face.landmarks.mouthCenter) };
+
+                ctx.save();
+                // Biometric structural mesh triangle
+                ctx.strokeStyle = isRecognized ? 'rgba(52, 211, 153, 0.45)' : 'rgba(34, 211, 238, 0.45)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([2, 2]);
+
+                ctx.beginPath();
+                ctx.moveTo(leftEye.x, leftEye.y);
+                ctx.lineTo(rightEye.x, rightEye.y);
+                ctx.lineTo(nose.x, nose.y);
+                ctx.closePath();
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(nose.x, nose.y);
+                ctx.lineTo(mouth.x, mouth.y);
+                ctx.stroke();
+
+                ctx.setLineDash([]); // Reset line dash
+
+                // Landmark nodes
+                const drawLandmark = (pt: { x: number; y: number }, color: string) => {
+                  ctx.fillStyle = color;
+                  ctx.beginPath();
+                  ctx.arc(pt.x, pt.y, 2.5, 0, Math.PI * 2);
+                  ctx.fill();
+                  ctx.strokeStyle = '#ffffff';
+                  ctx.lineWidth = 0.8;
+                  ctx.stroke();
+                };
+
+                drawLandmark(leftEye, isRecognized ? '#34d399' : '#38bdf8');
+                drawLandmark(rightEye, isRecognized ? '#34d399' : '#38bdf8');
+                drawLandmark(nose, isRecognized ? '#10b981' : '#06b6d4');
+                drawLandmark(mouth, isRecognized ? '#059669' : '#0284c7');
+
+                ctx.restore();
+              }
             });
           }
         }
@@ -580,6 +638,7 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
     showHudOverlay,
     detectedFaces,
     activeFaceIndex,
+    showLandmarks,
     runDetection,
   ]);
 
@@ -772,6 +831,82 @@ export const CctvStreamPlayer: React.FC<CctvStreamPlayerProps> = ({
 
         {/* Action Button: Choose Video File & Presets */}
         <div className="flex items-center gap-2">
+          {/* AI & Biometrics Settings Popover */}
+          <div className="relative">
+            <button
+              onClick={() => setShowAiSettings(!showAiSettings)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium transition-colors ${
+                showAiSettings
+                  ? 'bg-indigo-600 text-white border-indigo-400 shadow-md shadow-indigo-500/20'
+                  : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 border-slate-700'
+              }`}
+              title="تنظیمات دقت پردازش و بیومتریک چهره"
+            >
+              <Sliders className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="hidden sm:inline">دقت پردازش چهره</span>
+            </button>
+
+            {showAiSettings && (
+              <div className="absolute left-0 mt-1.5 w-72 bg-slate-900/95 border border-indigo-500/40 rounded-xl shadow-2xl p-3 z-40 space-y-3 backdrop-blur-md animate-in fade-in">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Crosshair className="w-3.5 h-3.5 text-indigo-400" />
+                    تنظیمات بینایی ماشین و هوش مصنوعی
+                  </span>
+                  <span className="text-[10px] text-indigo-400 font-mono bg-indigo-950 px-1.5 py-0.5 rounded border border-indigo-800">
+                    V2.4 PRO
+                  </span>
+                </div>
+
+                {/* Threshold slider */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-300">آستانه تطبیق بیومتریک:</span>
+                    <span className="font-mono font-bold text-indigo-400">
+                      {toPersianDigits(recognitionThreshold)}٪
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={50}
+                    max={95}
+                    step={1}
+                    value={recognitionThreshold}
+                    onChange={(e) => setRecognitionThreshold(Number(e.target.value))}
+                    className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-500">
+                    <span>حساسیت بالا (۵۰٪)</span>
+                    <span>سخت‌گیرانه (۹۵٪)</span>
+                  </div>
+                </div>
+
+                {/* Toggles */}
+                <div className="space-y-2 pt-1 border-t border-slate-800/80">
+                  <label className="flex items-center justify-between text-xs cursor-pointer">
+                    <span className="text-slate-300">نمایش لندمارک‌های هندسی چهره</span>
+                    <input
+                      type="checkbox"
+                      checked={showLandmarks}
+                      onChange={(e) => setShowLandmarks(e.target.checked)}
+                      className="rounded bg-slate-800 border-slate-700 text-indigo-500 focus:ring-0 w-4 h-4 cursor-pointer"
+                    />
+                  </label>
+
+                  <label className="flex items-center justify-between text-xs cursor-pointer">
+                    <span className="text-slate-300">فیلتر لرزش‌گیر هوشمند کادر (EMA)</span>
+                    <input
+                      type="checkbox"
+                      checked={enableJitterFilter}
+                      onChange={(e) => setEnableJitterFilter(e.target.checked)}
+                      className="rounded bg-slate-800 border-slate-700 text-indigo-500 focus:ring-0 w-4 h-4 cursor-pointer"
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Preset Videos Dropdown */}
           <div className="relative">
             <button

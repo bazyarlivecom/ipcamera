@@ -5,20 +5,36 @@ export interface BoundingBox {
   height: number;
 }
 
+export interface FacialPoint {
+  x: number;
+  y: number;
+}
+
+export interface FacialLandmarks {
+  leftEye: FacialPoint;
+  rightEye: FacialPoint;
+  noseTip: FacialPoint;
+  mouthCenter: FacialPoint;
+}
+
 export interface DetectedFace {
   id: string;
   box: BoundingBox;
   confidence: number;
+  matchScore?: number;
   label?: string;
   trackingId: number;
   snapshotUrl?: string;
   timestamp: string;
   recognizedPerson?: RegisteredPerson | null;
+  landmarks?: FacialLandmarks;
+  descriptor?: number[];
   attributes?: {
     ageRange?: string;
     gender?: string;
     emotion?: string;
     mask?: boolean;
+    glasses?: boolean;
   };
 }
 
