@@ -23,14 +23,14 @@ export interface DetectedFace {
   id: string;
   box: BoundingBox;
   confidence: number;
-  matchScore?: number;
-  label?: string;
   trackingId: number;
   snapshotUrl?: string;
   timestamp: string;
-  recognizedPerson?: RegisteredPerson | null;
   landmarks?: FacialLandmarks;
   descriptor?: number[];
+  recognizedPerson?: RegisteredPerson | null;
+  matchScore?: number;
+  label?: string;
   attributes?: {
     ageRange?: string;
     gender?: string;
@@ -38,6 +38,21 @@ export interface DetectedFace {
     mask?: boolean;
     glasses?: boolean;
   };
+}
+
+export interface YuNetSettings {
+  confidenceThreshold: number; // 30 to 90 (default 55)
+  nmsThreshold: number; // 20 to 60 (default 35)
+  showLandmarks: boolean;
+  enableSmoothing: boolean;
+}
+
+export interface MediaSourceConfig {
+  type: 'webcam' | 'file' | 'preset';
+  url?: string;
+  name: string;
+  fileName?: string;
+  isImage?: boolean;
 }
 
 export interface RegisteredPerson {
