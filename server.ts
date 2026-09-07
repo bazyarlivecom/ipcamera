@@ -771,6 +771,22 @@ app.get('/api/camera/proxy', async (req: Request, res: Response) => {
   }
 });
 
+// Helper to call Gemini with automatic fallback across supported flash models
+async function generateWithFlashFallback(ai: any, contents: any) {
+  const candidateModels = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
+  let lastErr: any = null;
+  for (const model of candidateModels) {
+    try {
+      const response = await ai.models.generateContent({ model, contents });
+      return response;
+    } catch (e: any) {
+      lastErr = e;
+      console.warn(`Model ${model} failed, trying next fallback:`, e?.message || e);
+    }
+  }
+  throw lastErr;
+}
+
 // Gemini AI deep facial analysis & demographic recognition
 app.post('/api/analyze-face', async (req: Request, res: Response) => {
   const { imageBase64 } = req.body;
@@ -800,20 +816,18 @@ app.post('/api/analyze-face', async (req: Request, res: Response) => {
     // Clean base64 header
     const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            {
-              inlineData: {
-                mimeType: 'image/jpeg',
-                data: cleanBase64,
-              },
+    const response = await generateWithFlashFallback(ai, [
+      {
+        role: 'user',
+        parts: [
+          {
+            inlineData: {
+              mimeType: 'image/jpeg',
+              data: cleanBase64,
             },
-            {
-              text: `این تصویر بریده‌شده از چهره یک فرد در سامانه دوربین مداربسته نظارتی است. لطفاً ویژگی‌های ظاهری را به صورت داده‌های امنیتی در یک فرمت JSON فارسی استخراج کن:
+          },
+          {
+            text: `این تصویر بریده‌شده از چهره یک فرد در سامانه دوربین مداربسته نظارتی است. لطفاً ویژگی‌های ظاهری را به صورت داده‌های امنیتی در یک فرمت JSON فارسی استخراج کن:
 1. ageEstimate: بازه سنی تخمینی (مثلا "۳۰ الی ۳۵ سال")
 2. genderEstimate: جنسیت تخمینی (مثلا "مرد" یا "زن")
 3. emotion: حالت چهره (مثلا "خنثی", "خوشحال", "نگران", "عادی")
@@ -821,11 +835,10 @@ app.post('/api/analyze-face', async (req: Request, res: Response) => {
 5. securityNotes: توضیح کوتاه ۱ خطی امنیتی فارسی
 
 خروجی باید صرفاً یک آبجکت معتبر JSON باشد بدون markdown code block اضافی.`,
-            },
-          ],
-        },
-      ],
-    });
+          },
+        ],
+      },
+    ]);
 
     const textResponse = response.text || '';
     let parsed: any = {};
@@ -929,25 +942,22 @@ ${candidatesListStr}
   }
 }`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            {
-              inlineData: {
-                mimeType: 'image/jpeg',
-                data: cleanBase64,
-              },
+    const response = await generateWithFlashFallback(ai, [
+      {
+        role: 'user',
+        parts: [
+          {
+            inlineData: {
+              mimeType: 'image/jpeg',
+              data: cleanBase64,
             },
-            {
-              text: prompt,
-            },
-          ],
-        },
-      ],
-    });
+          },
+          {
+            text: prompt,
+          },
+        ],
+      },
+    ]);
 
     const textResponse = response.text || '';
     let parsed: any = {};
@@ -988,6 +998,160 @@ ${candidatesListStr}
         ? `تطابق اولیه بر اساس ساختار بیومتریک با پرونده ${fallbackPerson.fullName}`
         : 'عدم تطابق با پرسنل',
       attributes: { ageRange: '۲۸-۳۵ سال', gender: 'مرد', emotion: 'طبیعی' },
+    });
+  }
+});
+
+// Advanced Zero-Shot Full-Frame Face Detection & Person Matching via Gemini Neural Vision
+app.post('/api/face/detect-frame', async (req: Request, res: Response) => {
+  const { imageBase64 } = req.body;
+  if (!imageBase64) {
+    res.status(400).json({ error: 'imageBase64 is required' });
+    return;
+  }
+
+  const ai = getGeminiClient();
+  if (!ai) {
+    res.json({ success: false, error: 'Gemini client not initialized', faces: [] });
+    return;
+  }
+
+  const db = readDb();
+  const registered = db.registeredPersons || [];
+
+  try {
+    const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+
+    const candidatesListStr = registered.length > 0
+      ? 'فهرست پرسنل مجاز ثبت‌شده جهت تطبیق هویت:\n' + registered
+          .map(
+            (c: any) =>
+              `- شناسه: "${c.id}" | نام: "${c.fullName}" | نقش: "${c.role}" | واحد: "${c.department}"`
+          )
+          .join('\n')
+      : 'هیچ پرسنلی در دیتابیس ثبت نشده است.';
+
+    const prompt = `شما یک مدل بینایی ماشین و هوش مصنوعی امنیتی برای تشخیص دقیق چهره انسان (Human Face Detection) در دوربین‌های مداربسته هستید.
+تصویر ارسال‌شده یک فریم از دوربین است.
+
+دستورالعمل‌های حیاتی:
+۱. فقط و فقط چهره واقعی انسان را شناسایی کن.
+۲. بسیار دقیق باش و هرگز اشیاء بی‌جان، مبلمان، صندلی، میز، دیوار، در و پنجره، چوب، سنگ، کوه، کف زمین، لباس یا دست و پا را به عنوان چهره انتخاب نکن (عدم وجود False Positive).
+۳. اگر هیچ چهره انسانی در تصویر وجود ندارد (مثلاً اتاق خالی، طبیعت، مبلمان، پس‌زمینه)، حتماً یک آرایه خالی faces: [] برگردان.
+۴. برای هر چهره واقعی که می‌بینی:
+   - مختصات کادر چهره (Bounding Box) را به صورت مقادیر نرمال‌شده بین 0.0 تا 1.0 یا 0 تا 1000 مشخص کن: x (سمت چپ), y (بالا), width (عرض), height (ارتفاع).
+   - موقعیت تقریبی ۴ نقطه کلیدی (landmarks) را هم مشخص کن: leftEye, rightEye, noseTip, mouthCenter.
+   - درصد اطمینان (confidence) بین 80 تا 99.
+   - تخمین جنسیت (gender: "مرد" یا "زن")، بازه سنی (ageRange: مثلا "۳۰-۳۵ سال")، و حالت چهره (emotion: مثلا "طبیعی").
+   - اگر با یکی از پرسنل زیر تطابق چهره دارد، شناسه پرسنل را در matchedPersonId قرار بده، در غیر این صورت null بگذار:
+${candidatesListStr}
+
+۵. خروجی باید منحصراً یک JSON معتبر مطابق ساختار زیر بدون هیچ متن اضافی یا توضیحات باشد:
+{
+  "faces": [
+    {
+      "box": {
+        "x": 0.35,
+        "y": 0.20,
+        "width": 0.18,
+        "height": 0.25
+      },
+      "landmarks": {
+        "leftEye": { "x": 0.40, "y": 0.28 },
+        "rightEye": { "x": 0.48, "y": 0.28 },
+        "noseTip": { "x": 0.44, "y": 0.34 },
+        "mouthCenter": { "x": 0.44, "y": 0.40 }
+      },
+      "confidence": 97.5,
+      "gender": "مرد",
+      "ageRange": "۳۵-۴۰ سال",
+      "emotion": "طبیعی",
+      "matchedPersonId": "person-01"
+    }
+  ]
+}`;
+
+    const response = await generateWithFlashFallback(ai, [
+      {
+        role: 'user',
+        parts: [
+          { inlineData: { mimeType: 'image/jpeg', data: cleanBase64 } },
+          { text: prompt },
+        ],
+      },
+    ]);
+
+    const textResponse = response.text || '';
+    const cleaned = textResponse.replace(/```json/gi, '').replace(/```/gi, '').trim();
+    let parsed: any = { faces: [] };
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch (e) {
+      console.warn('JSON parse error from Gemini face detect:', e, textResponse);
+    }
+
+    const rawFaces = Array.isArray(parsed.faces) ? parsed.faces : [];
+    const formattedFaces = rawFaces.map((f: any, idx: number) => {
+      let b = f.box || { x: 0, y: 0, width: 0, height: 0 };
+      // Normalize if returned in 0..1000 scale
+      let x = Number(b.x) || 0;
+      let y = Number(b.y) || 0;
+      let w = Number(b.width) || 0;
+      let h = Number(b.height) || 0;
+      if (x > 1 || y > 1 || w > 1 || h > 1) {
+        x /= 1000;
+        y /= 1000;
+        w /= 1000;
+        h /= 1000;
+      }
+      x = Math.max(0, Math.min(0.95, x));
+      y = Math.max(0, Math.min(0.95, y));
+      w = Math.max(0.04, Math.min(1 - x, w));
+      h = Math.max(0.04, Math.min(1 - y, h));
+
+      const matched = f.matchedPersonId
+        ? registered.find((p: any) => p.id === f.matchedPersonId) || null
+        : null;
+
+      const normPt = (pt: any) => {
+        if (!pt) return null;
+        let px = Number(pt.x) || 0;
+        let py = Number(pt.y) || 0;
+        if (px > 1 || py > 1) { px /= 1000; py /= 1000; }
+        return { x: Math.max(0, Math.min(1, px)), y: Math.max(0, Math.min(1, py)) };
+      };
+
+      const leftEye = normPt(f.landmarks?.leftEye) || { x: x + w * 0.35, y: y + h * 0.37 };
+      const rightEye = normPt(f.landmarks?.rightEye) || { x: x + w * 0.65, y: y + h * 0.37 };
+      const noseTip = normPt(f.landmarks?.noseTip) || { x: x + w * 0.50, y: y + h * 0.56 };
+      const mouthCenter = normPt(f.landmarks?.mouthCenter) || { x: x + w * 0.50, y: y + h * 0.77 };
+
+      return {
+        id: `ai-face-${Date.now()}-${idx}`,
+        trackingId: 200 + idx,
+        box: { x, y, width: w, height: h },
+        landmarks: { leftEye, rightEye, noseTip, mouthCenter },
+        confidence: Number(f.confidence) || 96.0,
+        recognizedPerson: matched,
+        label: matched ? matched.fullName : `سوژه شناسایی‌شده #${200 + idx}`,
+        attributes: {
+          gender: f.gender || 'نامشخص',
+          ageRange: f.ageRange || '۳۰-۴۰ سال',
+          emotion: f.emotion || 'طبیعی',
+        },
+      };
+    });
+
+    res.json({
+      success: true,
+      faces: formattedFaces,
+    });
+  } catch (err: any) {
+    console.error('Gemini detect-frame error:', err);
+    res.json({
+      success: false,
+      error: err.message,
+      faces: [],
     });
   }
 });
