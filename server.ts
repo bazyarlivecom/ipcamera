@@ -523,19 +523,33 @@ app.get('/api/camera/proxy', async (req: Request, res: Response) => {
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 
     const isDahua = username && password;
-    let fetchFn = fetch;
+    let fetchFn = (url: any, opts: any) => fetch(url, opts);
+    
     if (isDahua) {
-      const client = new DigestFetch(username, password, { basic: true });
+      // Create a client without forcing basic auth, so it handles Digest challenge.
+      const client = new DigestFetch(username, password);
       fetchFn = client.fetch.bind(client);
     }
 
-    const response = await fetchFn(targetUrl, {
+    let response = await fetchFn(targetUrl, {
       signal: controller.signal as any,
       headers: {
         'User-Agent': 'CCTV-Surveillance-Proxy/1.0',
         Accept: 'image/*,video/*,*/*',
       },
     });
+
+    // If it still fails with 401, try forcing Basic Auth as a fallback for older cameras
+    if (response.status === 401 && isDahua) {
+      const basicClient = new DigestFetch(username, password, { basic: true });
+      response = await basicClient.fetch(targetUrl, {
+        signal: controller.signal as any,
+        headers: {
+          'User-Agent': 'CCTV-Surveillance-Proxy/1.0',
+          Accept: 'image/*,video/*,*/*',
+        },
+      });
+    }
     
     clearTimeout(timeoutId);
 
